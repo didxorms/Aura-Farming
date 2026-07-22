@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#161914" />
+    <meta
+      name="description"
+      content="SNS에서 떡상할 영상을 발견해 제한된 슬롯에 심는 모바일 게임 프로토타입"
+    />
+    <title>떡상농장 — Viral Field Prototype</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="noise" aria-hidden="true"></div>
+
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand-lockup" aria-label="떡상농장">
+          <span class="brand-mark" aria-hidden="true">
+            <span></span><span></span><span></span><span></span>
+          </span>
+          <div>
+            <p class="eyebrow">VIRAL FIELD / v0.2</p>
+            <h1>떡상농장</h1>
+          </div>
+        </div>
+
+        <button class="icon-button" id="resetButton" type="button" aria-label="프로토타입 초기화">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7" />
+          </svg>
+        </button>
+      </header>
+
+      <section class="hero-panel" aria-labelledby="portfolioTitle">
+        <div class="hero-copy">
+          <p class="eyebrow">MY FIELD VALUE</p>
+          <h2 id="portfolioTitle"><span id="portfolioValue">₩0</span></h2>
+          <p class="hero-delta" id="portfolioDelta">+0.0% 오늘</p>
+        </div>
+
+        <div class="hero-chart" id="heroChart" aria-label="보유 포지션 가치 그래프"></div>
+
+        <div class="hero-stats">
+          <div>
+            <span>보유 코인</span>
+            <strong id="balanceValue">0 C</strong>
+          </div>
+          <div>
+            <span>사용 중</span>
+            <strong id="slotUsage">0 / 4</strong>
+          </div>
+          <div>
+            <span>발굴력</span>
+            <strong id="scoutLevel">LV. 01</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="demo-clock" aria-labelledby="clockTitle">
+        <div>
+          <p class="eyebrow" id="clockTitle">PROTOTYPE CLOCK</p>
+          <p><strong id="clockLabel">DAY 01 · 09:00</strong><span>실제 24시간을 버튼으로 압축</span></p>
+        </div>
+        <div class="clock-actions">
+          <button class="chip-button" id="advanceOneButton" type="button">+1H</button>
+          <button class="chip-button chip-button--accent" id="advanceSixButton" type="button">+6H</button>
+        </div>
+      </section>
+
+      <section class="plant-panel" aria-labelledby="plantTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">NEW SIGNAL</p>
+            <h2 id="plantTitle">안 뜬 링크를 심어봐</h2>
+          </div>
+          <span class="cost-tag">1,000 C · 전액 반환</span>
+        </div>
+
+        <form class="link-form" id="linkForm">
+          <label class="sr-only" for="linkInput">쇼츠, 릴스 또는 틱톡 링크</label>
+          <div class="link-input-wrap">
+            <span class="link-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M10 13a5 5 0 0 0 7.54.54l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15M14 11a5 5 0 0 0-7.54-.54l-2 2a5 5 0 0 0 7.07 7.07l1.14-1.14" />
+              </svg>
+            </span>
+            <input
+              id="linkInput"
+              name="url"
+              type="url"
+              inputmode="url"
+              autocomplete="off"
+              placeholder="쇼츠 링크를 붙여넣기"
+              required
+            />
+            <button class="paste-button" id="pasteButton" type="button">붙여넣기</button>
+          </div>
+          <div class="link-form-actions">
+            <button class="secondary-button" id="sampleButton" type="button">
+              <span aria-hidden="true">✦</span> 샘플 링크
+            </button>
+            <button class="primary-button" type="submit">
+              분석하기
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+            </button>
+          </div>
+        </form>
+        <p class="prototype-note"><span></span> 지금은 실제 API 대신 링크별 가상 성장 곡선이 생성됩니다.</p>
+      </section>
+
+      <section class="field-section" aria-labelledby="fieldTitle">
+        <div class="section-heading section-heading--field">
+          <div>
+            <p class="eyebrow">ACTIVE POSITIONS</p>
+            <h2 id="fieldTitle">내 밭</h2>
+          </div>
+          <button class="text-button" id="harvestAllButton" type="button">전부 수확</button>
+        </div>
+
+        <div class="field-grid" id="fieldGrid" aria-live="polite"></div>
+      </section>
+
+      <section class="activity-section" aria-labelledby="activityTitle">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">FIELD WIRE</p>
+            <h2 id="activityTitle">지금 밭에서는</h2>
+          </div>
+          <span class="live-pill"><span></span> LIVE</span>
+        </div>
+        <ol class="activity-list" id="activityList"></ol>
+      </section>
+
+      <section class="season-card" aria-labelledby="seasonTitle">
+        <div class="season-index">S/01</div>
+        <div>
+          <p class="eyebrow">WEEKLY SCOUT LEAGUE</p>
+          <h2 id="seasonTitle">이번 주 최고의 떡상을 찾아라</h2>
+          <p>발견 당시 조회수가 낮을수록 순위 보너스가 커집니다.</p>
+        </div>
+        <div class="rank-strip">
+          <span>내 예상 순위</span>
+          <strong id="rankValue">#—</strong>
+        </div>
+      </section>
+
+      <footer class="build-footer">
+        <span>LOCAL PROTOTYPE</span>
+        <button id="changelogButton" type="button">BUILD 0.2.0 · 변경 기록</button>
+      </footer>
+    </main>
+
+    <nav class="bottom-nav" aria-label="주요 메뉴">
+      <button class="nav-item is-active" type="button" data-nav="field">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18M5 20V10l7-5 7 5v10M9 20v-6h6v6" /></svg>
+        <span>내 밭</span>
+      </button>
+      <button class="nav-item" type="button" data-nav="discover">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
+        <span>발견</span>
+      </button>
+      <button class="nav-item nav-item--plant" id="navPlantButton" type="button" aria-label="새 링크 심기">
+        <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg></span>
+      </button>
+      <button class="nav-item" type="button" data-nav="history">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.34-5.66L4 8.68M4 4v4.68h4.68M12 8v5l3 2" /></svg>
+        <span>수확기록</span>
+      </button>
+      <button class="nav-item" type="button" data-nav="lab">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.73 3h10.54A2 2 0 0 0 19 18l-5-9V3M8 15h8" /></svg>
+        <span>실험실</span>
+      </button>
+    </nav>
+
+    <div class="modal-backdrop" id="modalBackdrop" hidden></div>
+
+    <section class="bottom-sheet" id="candidateSheet" aria-modal="true" role="dialog" aria-labelledby="candidateTitle" hidden>
+      <button class="sheet-close" type="button" data-close-sheet aria-label="닫기">×</button>
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <p class="eyebrow">SIGNAL DETECTED</p>
+      <h2 id="candidateTitle">새 씨앗 분석</h2>
+      <div id="candidateContent"></div>
+    </section>
+
+    <section class="bottom-sheet" id="positionSheet" aria-modal="true" role="dialog" aria-labelledby="positionTitle" hidden>
+      <button class="sheet-close" type="button" data-close-sheet aria-label="닫기">×</button>
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <p class="eyebrow">POSITION DETAIL</p>
+      <h2 id="positionTitle">포지션 상세</h2>
+      <div id="positionContent"></div>
+    </section>
+
+    <section class="bottom-sheet bottom-sheet--result" id="resultSheet" aria-modal="true" role="dialog" aria-labelledby="resultTitle" hidden>
+      <button class="sheet-close sheet-close--light" type="button" data-close-sheet aria-label="닫기">×</button>
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <p class="eyebrow">HARVEST COMPLETE</p>
+      <h2 id="resultTitle">수확 완료</h2>
+      <div id="resultContent"></div>
+    </section>
+
+    <section class="bottom-sheet" id="changelogSheet" aria-modal="true" role="dialog" aria-labelledby="changelogTitle" hidden>
+      <button class="sheet-close" type="button" data-close-sheet aria-label="닫기">×</button>
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <p class="eyebrow">BUILD HISTORY</p>
+      <h2 id="changelogTitle">변경 기록</h2>
+      <div class="changelog-list">
+        <article class="changelog-entry changelog-entry--current">
+          <div class="changelog-version">
+            <strong>v0.2</strong>
+            <time datetime="2026-07-23">2026.07.23</time>
+          </div>
+          <div>
+            <h3>EARLY BIRD</h3>
+            <ul>
+              <li>발견 순번과 현재 발견자 수 추가</li>
+              <li>씨앗값 100% 반환의 무손실 수확</li>
+              <li>수확한 링크의 재진입 제한</li>
+              <li>즉시 교체 유지, 쿨타임과 레버리지 제외</li>
+              <li>v0.1 저장 데이터 자동 마이그레이션</li>
+            </ul>
+          </div>
+        </article>
+        <article class="changelog-entry">
+          <div class="changelog-version">
+            <strong>v0.1</strong>
+            <time datetime="2026-07-23">2026.07.23</time>
+          </div>
+          <div>
+            <h3>FIRST SEED</h3>
+            <ul>
+              <li>링크별 가상 성장 곡선 구현</li>
+              <li>4개 슬롯과 포지션 교체·수확</li>
+              <li>테스트 시계와 24시간 자동 수확</li>
+              <li>수확 등급·결과 공유·로컬 저장</li>
+            </ul>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <template id="emptyPlotTemplate">
+      <button class="plot-card plot-card--empty" type="button" data-empty-plot>
+        <span class="empty-plot-icon" aria-hidden="true">+</span>
+        <strong>빈 슬롯</strong>
+        <span>새 링크를 심을 수 있어요</span>
+      </button>
+    </template>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>
