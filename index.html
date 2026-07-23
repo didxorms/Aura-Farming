@@ -22,7 +22,7 @@
             <span></span><span></span><span></span><span></span>
           </span>
           <div>
-            <p class="eyebrow">VIRAL FIELD / v0.5</p>
+            <p class="eyebrow">VIRAL FIELD / v0.6</p>
             <h1>떡상농장</h1>
           </div>
         </div>
@@ -171,7 +171,7 @@
             </button>
           </div>
         </form>
-        <p class="prototype-note"><span></span> YouTube 제목·채널·썸네일을 연결합니다. API 키가 있으면 시작 조회수도 실제 값이며 이후 성장은 데모입니다.</p>
+        <p class="prototype-note"><span></span> API 키가 연결된 YouTube 영상은 심은 뒤 실제 조회수를 5분마다 추적합니다.</p>
       </section>
 
       <section class="field-section" aria-labelledby="fieldTitle">
@@ -181,6 +181,14 @@
             <h2 id="fieldTitle">내 밭</h2>
           </div>
           <button class="text-button" id="harvestAllButton" type="button">전부 수확</button>
+        </div>
+
+        <div class="youtube-sync-bar">
+          <div>
+            <strong><span aria-hidden="true"></span> YOUTUBE LIVE</strong>
+            <small id="youtubeSyncStatus">실제 YouTube 영상을 심으면 추적이 시작됩니다.</small>
+          </div>
+          <button id="youtubeSyncButton" type="button" disabled>↻ 실제 조회수 갱신</button>
         </div>
 
         <div class="field-grid" id="fieldGrid" aria-live="polite"></div>
@@ -213,7 +221,7 @@
 
       <footer class="build-footer">
         <span>LOCAL PROTOTYPE</span>
-        <button id="changelogButton" type="button">BUILD 0.5 · 변경 기록</button>
+        <button id="changelogButton" type="button">BUILD 0.6 · 변경 기록</button>
       </footer>
     </main>
 
@@ -272,6 +280,21 @@
       <h2 id="changelogTitle">변경 기록</h2>
       <div class="changelog-list">
         <article class="changelog-entry changelog-entry--current">
+          <div class="changelog-version">
+            <strong>v0.6</strong>
+            <time datetime="2026-07-24">2026.07.24</time>
+          </div>
+          <div>
+            <h3>LIVE VIEW TRACKING</h3>
+            <ul>
+              <li>심은 시점의 실제 YouTube 조회수를 기준점으로 저장</li>
+              <li>활성 영상 통계를 한 번에 갱신해 실제 증가량 기록</li>
+              <li>5분 자동 동기화와 수동 새로고침 제공</li>
+              <li>실제 조회수 스냅샷으로 밭 그래프와 수확 가치 계산</li>
+            </ul>
+          </div>
+        </article>
+        <article class="changelog-entry">
           <div class="changelog-version">
             <strong>v0.5</strong>
             <time datetime="2026-07-23">2026.07.23</time>

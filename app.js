@@ -1,11 +1,13 @@
 "use strict";
 
-const APP_VERSION = "0.5.0";
-const STORAGE_KEY = "viral-field-prototype-v5";
-const LEGACY_STORAGE_KEYS = ["viral-field-prototype-v4", "viral-field-prototype-v3", "viral-field-prototype-v2", "viral-field-prototype-v1"];
+const APP_VERSION = "0.6.0";
+const STORAGE_KEY = "viral-field-prototype-v6";
+const LEGACY_STORAGE_KEYS = ["viral-field-prototype-v5", "viral-field-prototype-v4", "viral-field-prototype-v3", "viral-field-prototype-v2", "viral-field-prototype-v1"];
 const MAX_SLOTS = 4;
 const SEED_COST = 1000;
 const AUTO_HARVEST_MINUTES = 24 * 60;
+const YOUTUBE_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const MAX_VIEW_SNAPSHOTS = 48;
 
 const palette = [
   { color: "#c8ff3d", ink: "#171a15" },
@@ -197,6 +199,8 @@ const elements = {
   advanceOneButton: document.querySelector("#advanceOneButton"),
   advanceSixButton: document.querySelector("#advanceSixButton"),
   harvestAllButton: document.querySelector("#harvestAllButton"),
+  youtubeSyncButton: document.querySelector("#youtubeSyncButton"),
+  youtubeSyncStatus: document.querySelector("#youtubeSyncStatus"),
   resetButton: document.querySelector("#resetButton"),
   navPlantButton: document.querySelector("#navPlantButton"),
   modalBackdrop: document.querySelector("#modalBackdrop"),
@@ -227,6 +231,7 @@ let selectedReplacementId = null;
 let sampleIndex = 2;
 let toastTimer = null;
 let activeFeedFilter = "signal";
+let youtubeSyncInFlight = false;
 
 function buildInitialState() {
   const initialScout = createScoutEntry(sampleSources[2], 0);
@@ -245,6 +250,11 @@ function buildInitialState() {
       text: "새 신호 12개가 발견 피드에 포착됐습니다.",
       minute: 0,
     }],
+    youtubeSync: {
+      apiKeyConfigured: null,
+      lastAttemptAt: null,
+      lastSuccessAt: null,
+    },
     currentView: "field",
   };
 
@@ -297,6 +307,14 @@ function migrateState(savedState) {
       discoverersAtPlant: position.discoverersAtPlant || discoveryRankFor(position),
       curveOffsetHours: position.curveOffsetHours || 0,
       thumbnailUrl: position.thumbnailUrl || youtubeThumbnailForUrl(position.url),
+      actualEntryViews: Number.isFinite(position.actualEntryViews)
+        ? position.actualEntryViews
+        : position.statsMode === "youtube-api" ? position.entryViews : null,
+      liveViews: Number.isFinite(position.liveViews)
+        ? position.liveViews
+        : position.statsMode === "youtube-api" ? position.entryViews : null,
+      lastSyncedAt: position.lastSyncedAt || position.syncedAt || null,
+      viewSnapshots: normalizeViewSnapshots(position),
     })),
     harvests: savedState.harvests.map((harvest) => {
       const discoveryRank = harvest.discoveryRank || 1 + (hashString(harvest.sourceId || harvest.url || harvest.title) % 120);
@@ -314,6 +332,11 @@ function migrateState(savedState) {
     ])),
     watchlist: scoutQueue.map((entry) => entry.sourceId),
     scoutQueue,
+    youtubeSync: {
+      apiKeyConfigured: savedState.youtubeSync?.apiKeyConfigured ?? null,
+      lastAttemptAt: savedState.youtubeSync?.lastAttemptAt || null,
+      lastSuccessAt: savedState.youtubeSync?.lastSuccessAt || null,
+    },
     notifications: Array.isArray(savedState.notifications) ? savedState.notifications.slice(-12) : [],
     currentView: ["field", "discover", "history"].includes(savedState.currentView)
       ? savedState.currentView
@@ -377,6 +400,8 @@ function normalizeScoutEntry(entry) {
 
 function createPosition(source, plantedMinute = state.virtualMinutes) {
   const discoveryRank = discoveryRankFor(source);
+  const tracksActualViews = source.statsMode === "youtube-api" && Number.isFinite(source.initialViews);
+  const syncedAt = tracksActualViews ? (source.syncedAt || new Date().toISOString()) : null;
   return {
     id: createId(),
     sourceId: canonicalSourceId(source.url),
@@ -400,7 +425,29 @@ function createPosition(source, plantedMinute = state.virtualMinutes) {
     seed: hashString(source.url),
     discoveryRank,
     discoverersAtPlant: discoveryRank,
+    actualEntryViews: tracksActualViews ? source.initialViews : null,
+    liveViews: tracksActualViews ? source.initialViews : null,
+    lastSyncedAt: syncedAt,
+    viewSnapshots: tracksActualViews ? [{ at: syncedAt, views: source.initialViews }] : [],
   };
+}
+
+function normalizeViewSnapshots(position) {
+  const snapshots = (Array.isArray(position.viewSnapshots) ? position.viewSnapshots : [])
+    .map((snapshot) => ({
+      at: snapshot?.at,
+      views: Number(snapshot?.views),
+    }))
+    .filter((snapshot) => snapshot.at && Number.isFinite(snapshot.views) && snapshot.views >= 0)
+    .slice(-MAX_VIEW_SNAPSHOTS);
+
+  if (snapshots.length > 0 || position.statsMode !== "youtube-api") return snapshots;
+  const views = Number(position.liveViews ?? position.actualEntryViews ?? position.entryViews);
+  if (!Number.isFinite(views)) return [];
+  return [{
+    at: position.lastSyncedAt || position.syncedAt || new Date().toISOString(),
+    views,
+  }];
 }
 
 function createId() {
@@ -725,7 +772,52 @@ function growthFactor(curve, hours) {
   }
 }
 
+function isTrackableYoutubePosition(position) {
+  return /^[A-Za-z0-9_-]{11}$/.test(position.videoId || "")
+    && String(position.platform || "").includes("YOUTUBE");
+}
+
+function usesLiveYoutubeStats(position) {
+  return position.statsMode === "youtube-api"
+    && Number.isFinite(position.actualEntryViews)
+    && Number.isFinite(position.liveViews);
+}
+
+function applyYoutubeViewSnapshot(position, views, syncedAt = new Date().toISOString()) {
+  const nextViews = Math.max(0, Math.round(Number(views)));
+  if (!isTrackableYoutubePosition(position) || !Number.isFinite(nextViews)) {
+    return { applied: false, delta: 0, started: false };
+  }
+
+  const started = !usesLiveYoutubeStats(position);
+  const previousViews = started ? nextViews : position.liveViews;
+  if (started) {
+    position.demoEntryViews = position.entryViews;
+    position.entryViews = nextViews;
+    position.initialViews = nextViews;
+    position.actualEntryViews = nextViews;
+    position.earlyBonus = calculateEarlyBonus(nextViews, position.ageHours);
+    position.viewSnapshots = [];
+  }
+
+  position.statsMode = "youtube-api";
+  position.liveViews = nextViews;
+  position.lastSyncedAt = syncedAt;
+  const snapshots = normalizeViewSnapshots(position);
+  const lastSnapshot = snapshots.at(-1);
+  if (!lastSnapshot || lastSnapshot.at !== syncedAt || lastSnapshot.views !== nextViews) {
+    snapshots.push({ at: syncedAt, views: nextViews });
+  }
+  position.viewSnapshots = snapshots.slice(-MAX_VIEW_SNAPSHOTS);
+  return {
+    applied: true,
+    delta: nextViews - previousViews,
+    started,
+  };
+}
+
 function viewsAt(position, virtualMinute = state.virtualMinutes) {
+  if (usesLiveYoutubeStats(position)) return position.liveViews;
   const elapsedHours = Math.max(0, (virtualMinute - position.plantedMinute) / 60);
   const offset = position.curveOffsetHours || 0;
   const factor = growthFactor(position.curve, offset + elapsedHours) / growthFactor(position.curve, offset);
@@ -733,7 +825,8 @@ function viewsAt(position, virtualMinute = state.virtualMinutes) {
 }
 
 function positionRatio(position, virtualMinute = state.virtualMinutes) {
-  return viewsAt(position, virtualMinute) / position.entryViews;
+  const baseline = usesLiveYoutubeStats(position) ? position.actualEntryViews : position.entryViews;
+  return viewsAt(position, virtualMinute) / Math.max(1, baseline);
 }
 
 function payoutAt(position, virtualMinute = state.virtualMinutes) {
@@ -825,17 +918,115 @@ function renderField() {
   }
   elements.fieldGrid.innerHTML = cards.join("");
   elements.harvestAllButton.disabled = state.positions.length === 0;
+  renderYoutubeSyncControl();
+}
+
+function renderYoutubeSyncControl() {
+  const positions = state.positions.filter(isTrackableYoutubePosition);
+  const tracked = positions.filter(usesLiveYoutubeStats);
+  elements.youtubeSyncButton.disabled = youtubeSyncInFlight || positions.length === 0;
+  elements.youtubeSyncButton.textContent = youtubeSyncInFlight ? "동기화 중…" : "↻ 실제 조회수 갱신";
+
+  if (positions.length === 0) {
+    elements.youtubeSyncStatus.textContent = "실제 YouTube 영상을 심으면 추적이 시작됩니다.";
+    elements.youtubeSyncStatus.dataset.state = "idle";
+    return;
+  }
+  if (youtubeSyncInFlight) {
+    elements.youtubeSyncStatus.textContent = `${positions.length}개 영상의 최신 통계를 확인하는 중`;
+    elements.youtubeSyncStatus.dataset.state = "loading";
+    return;
+  }
+  if (state.youtubeSync.apiKeyConfigured === false) {
+    elements.youtubeSyncStatus.textContent = "API 키를 연결하면 실제 조회수를 기록합니다.";
+    elements.youtubeSyncStatus.dataset.state = "needs-key";
+    return;
+  }
+  if (state.youtubeSync.lastSuccessAt) {
+    elements.youtubeSyncStatus.textContent = `${tracked.length}/${positions.length} LIVE · ${formatWallTime(state.youtubeSync.lastSuccessAt)}`;
+    elements.youtubeSyncStatus.dataset.state = "live";
+    return;
+  }
+  elements.youtubeSyncStatus.textContent = `${positions.length}개 YouTube 영상 · 첫 동기화 대기`;
+  elements.youtubeSyncStatus.dataset.state = "ready";
+}
+
+async function refreshYoutubeStats({ manual = false } = {}) {
+  if (youtubeSyncInFlight) return;
+  const positions = state.positions.filter(isTrackableYoutubePosition);
+  if (positions.length === 0) {
+    if (manual) showToast("실제 YouTube 영상을 먼저 심어 주세요.");
+    return;
+  }
+
+  youtubeSyncInFlight = true;
+  state.youtubeSync.lastAttemptAt = new Date().toISOString();
+  renderYoutubeSyncControl();
+
+  try {
+    const videoIds = Array.from(new Set(positions.map((position) => position.videoId)));
+    const response = await fetch(`/api/youtube/stats?ids=${encodeURIComponent(videoIds.join(","))}`);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "실제 조회수를 가져오지 못했습니다.");
+
+    state.youtubeSync.apiKeyConfigured = payload.apiKeyConfigured;
+    if (!payload.apiKeyConfigured) {
+      if (manual) showToast("서버에 YOUTUBE_API_KEY가 연결되지 않았습니다.");
+      saveState();
+      return;
+    }
+
+    const statsByVideo = new Map((payload.items || []).map((item) => [item.videoId, item]));
+    let updated = 0;
+    let trackingStarted = 0;
+    let totalDelta = 0;
+    positions.forEach((position) => {
+      const item = statsByVideo.get(position.videoId);
+      if (!item || !Number.isFinite(item.views)) return;
+      const result = applyYoutubeViewSnapshot(position, item.views, payload.syncedAt);
+      if (!result.applied) return;
+      updated += 1;
+      if (result.started) trackingStarted += 1;
+      else totalDelta += result.delta;
+    });
+
+    state.youtubeSync.lastSuccessAt = payload.syncedAt;
+    if (totalDelta > 0) {
+      pushScoutNotification(
+        `YouTube 실제 조회수가 마지막 확인보다 +${formatCompact(totalDelta)} 증가했습니다.`,
+        "●",
+      );
+    }
+    render();
+    if (manual) {
+      const startedText = trackingStarted > 0 ? ` · ${trackingStarted}개 추적 시작` : "";
+      showToast(`${updated}개 영상의 실제 조회수를 갱신했습니다${startedText}.`);
+    }
+  } catch (error) {
+    if (manual) showToast(error.message || "실제 조회수를 갱신하지 못했습니다.");
+  } finally {
+    youtubeSyncInFlight = false;
+    renderYoutubeSyncControl();
+    saveState();
+  }
+}
+
+function youtubeSyncIsDue() {
+  if (state.positions.filter(isTrackableYoutubePosition).length === 0) return false;
+  const lastAttempt = Date.parse(state.youtubeSync.lastAttemptAt || "");
+  return !Number.isFinite(lastAttempt) || Date.now() - lastAttempt >= YOUTUBE_SYNC_INTERVAL_MS;
 }
 
 function plotCardMarkup(position) {
   const currentViews = viewsAt(position);
-  const ratio = currentViews / position.entryViews;
+  const ratio = positionRatio(position);
   const growth = (ratio - 1) * 100;
   const status = getStatus(position);
   const colors = palette[position.paletteIndex % palette.length];
   const values = positionSeries(position, 8);
   const scale = clamp(0.62 + Math.log2(Math.max(ratio, 1)) * 0.1, 0.62, 1.28);
   const thumbnailUrl = safeImageUrl(position.thumbnailUrl);
+  const liveStats = usesLiveYoutubeStats(position);
   const chartInk = thumbnailUrl ? "#fffef6" : colors.ink;
   const chartFill = thumbnailUrl ? "rgba(23,26,21,0.46)" : "rgba(255,255,255,0.28)";
 
@@ -850,7 +1041,7 @@ function plotCardMarkup(position) {
         ${thumbnailUrl ? `<img class="youtube-thumbnail" src="${escapeHtml(thumbnailUrl)}" alt="" loading="lazy" data-youtube-thumbnail />` : ""}
         <span class="platform-badge">${shortPlatform(position.platform)}</span>
         <span class="discovery-badge">#${formatNumber(position.discoveryRank)} 발견</span>
-        ${thumbnailUrl ? `<span class="crop-label">THUMBNAIL CROP</span>` : `<span class="signal-orb" aria-hidden="true"></span>`}
+        ${thumbnailUrl ? `<span class="crop-label">${liveStats ? "● LIVE VIEW CROP" : "THUMBNAIL CROP"}</span>` : `<span class="signal-orb" aria-hidden="true"></span>`}
         <div class="plot-spark" aria-hidden="true">${sparklineSvg(values, chartInk, chartFill, 2)}</div>
       </div>
       <div class="plot-body">
@@ -859,14 +1050,15 @@ function plotCardMarkup(position) {
           <span class="plot-menu" aria-hidden="true">···</span>
         </div>
         <p class="plot-handle">${escapeHtml(position.handle)} · 내 뒤로 +${formatCompact(discovererCountAt(position) - position.discoveryRank)}명</p>
+        ${liveStats ? `<p class="plot-live-meta">● 실제 조회수 · ${formatWallTime(position.lastSyncedAt)}</p>` : ""}
         <div class="plot-metrics">
           <div>
-            <span>현재 조회</span>
+            <span>${liveStats ? "실제 조회" : "현재 조회"}</span>
             <strong>${formatCompact(currentViews)}</strong>
           </div>
           <div class="plot-growth ${status.hot ? "" : "is-cold"}">
             <span>${status.icon} ${status.label}</span>
-            <strong>+${formatPercent(growth)}</strong>
+            <strong>${formatSignedPercent(growth)}</strong>
           </div>
         </div>
       </div>
@@ -875,6 +1067,13 @@ function plotCardMarkup(position) {
 }
 
 function positionSeries(position, count = 10) {
+  if (usesLiveYoutubeStats(position)) {
+    const snapshots = normalizeViewSnapshots(position);
+    const values = snapshots.map((snapshot) => snapshot.views).slice(-count);
+    if (values.length === 0) return [position.actualEntryViews, position.liveViews];
+    if (values.length === 1) return [position.actualEntryViews, values[0]];
+    return values;
+  }
   const elapsed = Math.max(1, elapsedMinutes(position));
   const values = [];
   for (let i = 0; i < count; i += 1) {
@@ -1263,7 +1462,7 @@ function renderCandidateSheet() {
       </div>
       <div class="comparison-card-metrics">
         <div><span>현재 조회</span><strong>${formatCompact(currentViews)}</strong></div>
-        <div><span>진입 후 성장</span><strong>+${formatPercent(growth)}</strong></div>
+        <div><span>진입 후 성장</span><strong>${formatSignedPercent(growth)}</strong></div>
         <div><span>발견 순번</span><strong>#${formatNumber(position.discoveryRank)}</strong></div>
         <div><span>지금 수확</span><strong>${formatNumber(payoutAt(position))} C</strong></div>
       </div>
@@ -1400,7 +1599,7 @@ function openPosition(positionId) {
   if (!position) return;
   const colors = palette[position.paletteIndex % palette.length];
   const current = viewsAt(position);
-  const ratio = current / position.entryViews;
+  const ratio = positionRatio(position);
   const growth = (ratio - 1) * 100;
   const payout = payoutAt(position);
   const profit = payout - SEED_COST;
@@ -1419,19 +1618,19 @@ function openPosition(positionId) {
         <p>${escapeHtml(position.handle)}</p>
         ${sourceNote ? `<div class="youtube-source-note">${sourceNote}</div>` : ""}
         <div class="sheet-stats">
-          <div class="sheet-stat"><span>현재 조회</span><strong>${formatCompact(current)}</strong></div>
-          <div class="sheet-stat"><span>상승률</span><strong>+${formatPercent(growth)}</strong></div>
+          <div class="sheet-stat"><span>${usesLiveYoutubeStats(position) ? "실제 조회" : "현재 조회"}</span><strong>${formatCompact(current)}</strong></div>
+          <div class="sheet-stat"><span>상승률</span><strong>${formatSignedPercent(growth)}</strong></div>
           <div class="sheet-stat"><span>발견 순번</span><strong>${position.discoveryRank === 1 ? "최초" : `#${formatNumber(position.discoveryRank)}`}</strong></div>
           <div class="sheet-stat"><span>자동 수확</span><strong>${formatRemaining(position)}</strong></div>
         </div>
       </div>
     </div>
     <div class="detail-chart">
-      <span class="detail-chart-label">VIEW GROWTH / DEMO</span>
+      <span class="detail-chart-label">${usesLiveYoutubeStats(position) ? "ACTUAL VIEW SNAPSHOTS" : "VIEW GROWTH / DEMO"}</span>
       ${sparklineSvg(positionSeries(position, 16), colors.ink, `${hexToRgba(colors.color, 0.42)}`, 3, true)}
     </div>
     <div class="position-meta">
-      <div class="sheet-stat"><span>진입 조회</span><strong>${formatCompact(position.entryViews)}</strong></div>
+      <div class="sheet-stat"><span>${usesLiveYoutubeStats(position) ? "실제 시작 조회" : "진입 조회"}</span><strong>${formatCompact(usesLiveYoutubeStats(position) ? position.actualEntryViews : position.entryViews)}</strong></div>
       <div class="sheet-stat"><span>보유 시간</span><strong>${formatDuration(elapsedMinutes(position))}</strong></div>
       <div class="sheet-stat"><span>현재 발견자</span><strong>${formatCompact(discoverers)}명</strong></div>
     </div>
@@ -1454,7 +1653,7 @@ function harvestPosition(positionId, showResult = true) {
   const position = state.positions[index];
   const currentViews = viewsAt(position);
   const payout = payoutAt(position);
-  const ratio = currentViews / position.entryViews;
+  const ratio = positionRatio(position);
   const discoverersAtHarvest = discovererCountAt(position);
   const result = {
     id: createId(),
@@ -1512,7 +1711,7 @@ function openResult(result) {
       <p>${formatCompact(result.entryViews)}뷰에서 심었고, 내 뒤로 ${formatCompact(Math.max(0, result.discoverersAtHarvest - result.discoveryRank))}명이 발견했습니다.</p>
     </div>
     <div class="result-stats">
-      <div class="result-stat"><span>성장률</span><strong>+${formatPercent(growth)}</strong></div>
+      <div class="result-stat"><span>성장률</span><strong>${formatSignedPercent(growth)}</strong></div>
       <div class="result-stat"><span>보유 시간</span><strong>${formatDuration(result.elapsed)}</strong></div>
       <div class="result-stat"><span>성장 보너스</span><strong>+${formatNumber(result.profit)} C</strong></div>
     </div>
@@ -1628,7 +1827,7 @@ function resultCardBlob(result) {
     const stats = [
       ["진입 조회", `${formatCompact(result.entryViews)} VIEW`],
       ["최종 조회", `${formatCompact(result.currentViews)} VIEW`],
-      ["성장", `+${formatPercent(growth)}`],
+      ["성장", formatSignedPercent(growth)],
       ["보유 시간", formatDuration(result.elapsed)],
     ];
     stats.forEach(([label, value], index) => {
@@ -1838,6 +2037,11 @@ function formatPercent(value) {
   return `${Math.max(0, value).toFixed(value >= 100 ? 0 : 1)}%`;
 }
 
+function formatSignedPercent(value) {
+  const numeric = Number(value) || 0;
+  return `${numeric >= 0 ? "+" : "−"}${formatPercent(Math.abs(numeric))}`;
+}
+
 function formatDuration(minutes) {
   const rounded = Math.max(0, Math.round(minutes));
   if (rounded < 60) return `${rounded}분`;
@@ -1848,6 +2052,19 @@ function formatDuration(minutes) {
 
 function formatRemaining(position) {
   return formatDuration(Math.max(0, AUTO_HARVEST_MINUTES - elapsedMinutes(position)));
+}
+
+function formatWallTime(value) {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "동기화 시간 미확인";
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 15) return "방금 동기화";
+  if (seconds < 60) return `${seconds}초 전`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}분 전`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}시간 전`;
+  return `${Math.floor(hours / 24)}일 전`;
 }
 
 function shortPlatform(platform) {
@@ -1873,7 +2090,7 @@ function safeImageUrl(value) {
 }
 
 function youtubeSourceNote(source) {
-  if (source.metadataMode === "youtube-api") return "YOUTUBE SYNC · 실제 시작 조회수 · 이후 성장 데모";
+  if (source.statsMode === "youtube-api") return "YOUTUBE LIVE · 심은 뒤 실제 조회수 추적";
   if (source.metadataMode === "youtube-oembed") return "YOUTUBE META · 실제 제목과 썸네일 · 조회수는 데모";
   if (source.metadataMode === "thumbnail-only" && source.thumbnailUrl) return "YOUTUBE CROP · 실제 썸네일 · 나머지는 데모";
   return "";
@@ -1947,6 +2164,7 @@ elements.pasteButton.addEventListener("click", async () => {
 
 elements.advanceOneButton.addEventListener("click", () => advanceTime(60));
 elements.advanceSixButton.addEventListener("click", () => advanceTime(360));
+elements.youtubeSyncButton.addEventListener("click", () => refreshYoutubeStats({ manual: true }));
 elements.navPlantButton.addEventListener("click", scrollToPlant);
 elements.changelogButton.addEventListener("click", () => openSheet(elements.changelogSheet));
 elements.directLinkButton.addEventListener("click", scrollToPlant);
@@ -2087,3 +2305,15 @@ elements.resetButton.addEventListener("click", () => {
 });
 
 render();
+
+if (typeof fetch === "function") {
+  window.setTimeout(() => {
+    if (youtubeSyncIsDue()) refreshYoutubeStats();
+  }, 800);
+  window.setInterval?.(() => {
+    if (document.visibilityState !== "hidden" && youtubeSyncIsDue()) refreshYoutubeStats();
+  }, YOUTUBE_SYNC_INTERVAL_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && youtubeSyncIsDue()) refreshYoutubeStats();
+  });
+}
