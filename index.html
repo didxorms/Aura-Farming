@@ -21,7 +21,7 @@
             <span></span><span></span><span></span><span></span>
           </span>
           <div>
-            <p class="eyebrow">VIRAL FIELD / v0.3</p>
+            <p class="eyebrow">VIRAL FIELD / v0.4.1</p>
             <h1>떡상농장</h1>
           </div>
         </div>
@@ -46,6 +46,20 @@
             <small>SIGNALS</small>
           </div>
         </div>
+
+        <section class="scout-desk" aria-labelledby="scoutDeskTitle">
+          <div class="section-heading scout-desk-heading">
+            <div>
+              <p class="eyebrow">SCOUT DESK / SAVED SIGNALS</p>
+              <h3 id="scoutDeskTitle">후보 보관함</h3>
+            </div>
+            <span class="scout-queue-count" id="scoutQueueCount">0 WATCHING</span>
+          </div>
+          <p class="scout-desk-intro">
+            원하는 링크를 먼저 담아두고 변화를 지켜봐. 기다리면 정보는 늘지만 발견 순번은 계속 밀려.
+          </p>
+          <div class="scout-queue" id="scoutQueue" aria-live="polite"></div>
+        </section>
 
         <section class="scout-wire" aria-labelledby="scoutWireTitle">
           <div class="section-heading">
@@ -198,7 +212,7 @@
 
       <footer class="build-footer">
         <span>LOCAL PROTOTYPE</span>
-        <button id="changelogButton" type="button">BUILD 0.3.0 · 변경 기록</button>
+        <button id="changelogButton" type="button">BUILD 0.4.1 · 변경 기록</button>
       </footer>
     </main>
 
@@ -257,6 +271,37 @@
       <h2 id="changelogTitle">변경 기록</h2>
       <div class="changelog-list">
         <article class="changelog-entry changelog-entry--current">
+          <div class="changelog-version">
+            <strong>v0.4.1</strong>
+            <time datetime="2026-07-23">2026.07.23</time>
+          </div>
+          <div>
+            <h3>CLEAR DECISION</h3>
+            <ul>
+              <li>활성·수확 완료 영상을 후보함에 다시 넣는 경로 차단</li>
+              <li>기존 저장 데이터의 잘못된 중복 후보 자동 정리</li>
+              <li>압축 표를 제목과 지표가 분리된 비교 카드로 개편</li>
+              <li>모바일에서는 지표를 2열로 배치해 가독성 개선</li>
+            </ul>
+          </div>
+        </article>
+        <article class="changelog-entry">
+          <div class="changelog-version">
+            <strong>v0.4</strong>
+            <time datetime="2026-07-23">2026.07.23</time>
+          </div>
+          <div>
+            <h3>SCOUT DESK</h3>
+            <ul>
+              <li>피드와 직접 입력 링크를 함께 보관하는 자유 후보함</li>
+              <li>기다리는 동안 변하는 조회수·발견 순번·조기 배수</li>
+              <li>후보와 현재 밭 4개를 한 화면에서 비교</li>
+              <li>후보별 전체 변화·급등만·알림 끄기 설정</li>
+              <li>수확 결과를 PNG 증명 카드로 저장·공유</li>
+            </ul>
+          </div>
+        </article>
+        <article class="changelog-entry">
           <div class="changelog-version">
             <strong>v0.3</strong>
             <time datetime="2026-07-23">2026.07.23</time>
