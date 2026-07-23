@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.4.0";
+const APP_VERSION = "0.4.1";
 const STORAGE_KEY = "viral-field-prototype-v4";
 const LEGACY_STORAGE_KEYS = ["viral-field-prototype-v3", "viral-field-prototype-v2", "viral-field-prototype-v1"];
 const MAX_SLOTS = 4;
@@ -272,6 +272,11 @@ function migrateState(savedState) {
   const legacyRefund = savedState.harvests.reduce((sum, harvest) => {
     return sum + Math.max(0, SEED_COST - (harvest.payout || 0));
   }, 0);
+  const lockedSourceIds = new Set([
+    ...savedState.positions.map((position) => position.sourceId || (position.url ? canonicalSourceId(position.url) : null)),
+    ...(savedState.harvestedSourceIds || []),
+    ...savedState.harvests.map((harvest) => harvest.sourceId || (harvest.url ? canonicalSourceId(harvest.url) : null)),
+  ].filter(Boolean));
   const legacyWatchlist = Array.from(new Set(savedState.watchlist || []));
   const scoutQueue = (Array.isArray(savedState.scoutQueue) && savedState.scoutQueue.length > 0
     ? savedState.scoutQueue
@@ -280,7 +285,7 @@ function migrateState(savedState) {
       return source ? createScoutEntry(source, 0) : null;
     }))
     .map((entry) => normalizeScoutEntry(entry))
-    .filter(Boolean);
+    .filter((entry) => entry && !lockedSourceIds.has(entry.sourceId));
   const migrated = {
     ...savedState,
     version: APP_VERSION,
@@ -570,10 +575,16 @@ function sourceMomentumAtOffset(source) {
 
 function addScoutCandidate(source, alertMode = "all") {
   const sourceId = canonicalSourceId(source.url);
-  if (isSourceWatched(sourceId)) return false;
+  if (isSourceWatched(sourceId) || scoutLockReason(sourceId)) return false;
   state.scoutQueue.push(createScoutEntry(source, state.virtualMinutes, alertMode));
   state.watchlist = state.scoutQueue.map((entry) => entry.sourceId);
   return true;
+}
+
+function scoutLockReason(sourceId) {
+  if (state.positions.some((position) => position.sourceId === sourceId)) return "active";
+  if (state.harvestedSourceIds.includes(sourceId)) return "harvested";
+  return null;
 }
 
 function removeScoutCandidate(sourceId) {
@@ -937,8 +948,11 @@ function renderDiscover() {
     const active = state.positions.find((position) => position.sourceId === sourceId);
     const harvested = state.harvestedSourceIds.includes(sourceId);
     const watched = isSourceWatched(sourceId);
+    const watchLocked = Boolean(active || harvested);
     const age = Math.max(1, Math.round(source.ageHours + state.virtualMinutes / 60));
     const disabledLabel = active ? `#${formatNumber(active.discoveryRank)}로 심은 중` : harvested ? "수확 완료" : "지금 심기";
+    const watchLabel = active ? "이미 심은 신호" : harvested ? "수확 기록에 보관됨" : watched ? "지켜보기 해제" : "지켜보기";
+    const footerLabel = active ? "ACTIVE · 후보 보관 불가" : harvested ? "ARCHIVED · 재진입 불가" : watched ? "WATCHING · 변화 알림 켜짐" : "결말은 아직 아무도 모름";
 
     return `
       <article class="feed-card ${watched ? "is-watched" : ""}" style="--feed-color:${colors.color}">
@@ -959,9 +973,10 @@ function renderDiscover() {
               class="watch-button ${watched ? "is-active" : ""}"
               type="button"
               data-feed-watch="${escapeHtml(sourceId)}"
-              aria-label="${watched ? "지켜보기 해제" : "지켜보기"}"
+              aria-label="${watchLabel}"
               aria-pressed="${watched}"
-            >${watched ? "●" : "○"}</button>
+              ${watchLocked ? "disabled" : ""}
+            >${watchLocked ? "—" : watched ? "●" : "○"}</button>
           </div>
           <div class="feed-metrics">
             <div><span>현재 조회</span><strong>${formatCompact(currentViews)}</strong></div>
@@ -969,7 +984,7 @@ function renderDiscover() {
             <div><span>지금 진입</span><strong>#${formatNumber(prospectiveRank)}</strong></div>
           </div>
           <div class="feed-card-actions">
-            <span>${watched ? "WATCHING · 변화 알림 켜짐" : "결말은 아직 아무도 모름"}</span>
+            <span>${footerLabel}</span>
             <button
               class="feed-plant-button"
               type="button"
@@ -1078,9 +1093,18 @@ function toggleWatch(sourceId) {
     removeScoutCandidate(sourceId);
     showToast("지켜보기를 해제했습니다.");
   } else {
+    const lockReason = scoutLockReason(sourceId);
+    if (lockReason === "active") {
+      showToast("이미 내 밭에 심은 영상은 후보로 다시 보관할 수 없습니다.");
+      return;
+    }
+    if (lockReason === "harvested") {
+      showToast("수확을 마친 영상은 후보로 다시 보관할 수 없습니다.");
+      return;
+    }
     const source = sampleSources.find((item) => canonicalSourceId(item.url) === sourceId);
     if (!source) return;
-    addScoutCandidate(sourceSnapshotAt(source));
+    if (!addScoutCandidate(sourceSnapshotAt(source))) return;
     showToast(`“${shortTitle(source?.title || "이 신호")}” 변화를 지켜봅니다.`);
   }
   render();
@@ -1136,18 +1160,25 @@ function renderCandidateSheet() {
     const selected = position.id === selectedReplacementId;
     const currentViews = viewsAt(position);
     const growth = (positionRatio(position) - 1) * 100;
+    const status = getStatus(position);
     const content = `
-      <div class="comparison-title">
-        <span>${isFull ? `${selected ? "●" : "○"} 교체 후보` : "현재 밭"}</span>
-        <strong>${escapeHtml(shortTitle(position.title))}</strong>
+      <div class="comparison-card-head">
+        <div>
+          <span class="comparison-kicker">${isFull ? `${selected ? "● 선택됨" : "○ 교체 후보"}` : "현재 밭"}</span>
+          <strong>${escapeHtml(position.title)}</strong>
+        </div>
+        <span class="comparison-status">${status.icon} ${status.label}</span>
       </div>
-      <div><span>현재 조회</span><strong>${formatCompact(currentViews)}</strong></div>
-      <div><span>성장</span><strong>+${formatPercent(growth)}</strong></div>
-      <div><span>발견</span><strong>#${formatNumber(position.discoveryRank)}</strong></div>
+      <div class="comparison-card-metrics">
+        <div><span>현재 조회</span><strong>${formatCompact(currentViews)}</strong></div>
+        <div><span>진입 후 성장</span><strong>+${formatPercent(growth)}</strong></div>
+        <div><span>발견 순번</span><strong>#${formatNumber(position.discoveryRank)}</strong></div>
+        <div><span>지금 수확</span><strong>${formatNumber(payoutAt(position))} C</strong></div>
+      </div>
     `;
     return isFull
-      ? `<button class="candidate-comparison-row comparison-position ${selected ? "is-selected" : ""}" type="button" data-replace-id="${position.id}">${content}</button>`
-      : `<div class="candidate-comparison-row comparison-position">${content}</div>`;
+      ? `<button class="comparison-card comparison-position ${selected ? "is-selected" : ""}" type="button" data-replace-id="${position.id}" aria-pressed="${selected}">${content}</button>`
+      : `<div class="comparison-card comparison-position">${content}</div>`;
   }).join("");
 
   const buttonLabel = isFull ? "선택한 포지션을 뽑고 심기" : "이 링크 심기";
@@ -1172,21 +1203,31 @@ function renderCandidateSheet() {
     </div>
     <div class="candidate-compare">
       <div class="candidate-compare-heading">
-        <h3>후보 vs 내 밭</h3>
-        <p>${isFull ? "교체할 포지션을 직접 선택해" : "추가 제한 없이 숫자만 비교해"}</p>
+        <div>
+          <p class="eyebrow">SIDE-BY-SIDE</p>
+          <h3>후보와 내 밭 비교</h3>
+        </div>
+        <p>${isFull ? "아래 밭을 누르면 교체 대상으로 선택돼" : "각 항목을 천천히 비교해 봐"}</p>
       </div>
-      <div class="candidate-comparison-row is-candidate">
-        <div class="comparison-title"><span>새 후보</span><strong>${escapeHtml(shortTitle(source.title))}</strong></div>
-        <div><span>현재 조회</span><strong>${formatCompact(source.initialViews)}</strong></div>
-        <div><span>신호</span><strong>${candidateSignal.icon} ${candidateSignal.label}</strong></div>
-        <div><span>지금 진입</span><strong>#${formatNumber(prospectiveRank)}</strong></div>
+      <div class="comparison-card comparison-card--candidate">
+        <div class="comparison-card-head">
+          <div>
+            <span class="comparison-kicker">새 후보</span>
+            <strong>${escapeHtml(source.title)}</strong>
+          </div>
+          <span class="comparison-status">${candidateSignal.icon} ${candidateSignal.label}</span>
+        </div>
+        <div class="comparison-card-metrics">
+          <div><span>현재 조회</span><strong>${formatCompact(source.initialViews)}</strong></div>
+          <div><span>지금 진입</span><strong>#${formatNumber(prospectiveRank)}</strong></div>
+          <div><span>조기 배수</span><strong>×${earlyBonus.toFixed(2)}</strong></div>
+          <div><span>업로드</span><strong>${source.ageHours}시간 전</strong></div>
+        </div>
       </div>
       ${comparisonRows || `
-        <div class="candidate-comparison-row comparison-position">
-          <div class="comparison-title"><span>현재 밭</span><strong>비어 있음</strong></div>
-          <div><span>슬롯</span><strong>0 / ${MAX_SLOTS}</strong></div>
-          <div><span>비교</span><strong>—</strong></div>
-          <div><span>발견</span><strong>—</strong></div>
+        <div class="comparison-empty">
+          <strong>현재 밭이 비어 있어</strong>
+          <span>교체할 영상 없이 바로 심을 수 있습니다.</span>
         </div>
       `}
     </div>
@@ -1211,7 +1252,10 @@ function togglePendingScoutCandidate() {
     removeScoutCandidate(sourceId);
     showToast("후보 보관함에서 제거했습니다.");
   } else {
-    addScoutCandidate(pendingCandidate);
+    if (!addScoutCandidate(pendingCandidate)) {
+      showToast("이미 심었거나 수확한 영상은 후보로 보관할 수 없습니다.");
+      return;
+    }
     showToast(`“${shortTitle(pendingCandidate.title)}”을 후보로 보관합니다.`);
   }
   renderCandidateSheet();
@@ -1391,7 +1435,7 @@ function resultGrade(ratio) {
 function resultShareText(result) {
   const percentile = discoveryPercentile(result.discoveryRank, result.discoverersAtHarvest);
   const discoveryText = result.discoveryRank === 1 ? "최초 발견자" : `${formatNumber(result.discoveryRank)}번째 발견 · 상위 ${percentile}%`;
-  return `나는 “${result.title}”을 ${formatCompact(result.entryViews)}뷰에서 발견했다. ${discoveryText} · 현재 ${formatCompact(result.currentViews)}뷰 · 떡상농장 v0.4`;
+  return `나는 “${result.title}”을 ${formatCompact(result.entryViews)}뷰에서 발견했다. ${discoveryText} · 현재 ${formatCompact(result.currentViews)}뷰 · 떡상농장 v0.4.1`;
 }
 
 function wrapCanvasText(context, text, maxWidth) {
@@ -1504,7 +1548,7 @@ function resultCardBlob(result) {
     context.fillText("떡상농장 · 내가 먼저 본 인터넷의 역사", 92, 1310);
     context.textAlign = "right";
     context.fillStyle = "#c8ff3d";
-    context.fillText("BUILD 0.4", 988, 1310);
+    context.fillText("BUILD 0.4.1", 988, 1310);
 
     canvas.toBlob((blob) => {
       if (blob) resolve(blob);

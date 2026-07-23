@@ -70,6 +70,9 @@ const assert = (condition, message) => {
 assert(api.state.positions.length === 2, "Initial state should contain two active positions");
 assert(api.sampleSources.length === 12, "Discovery feed should contain twelve signals");
 assert(api.state.scoutQueue.length === 1, "Initial state should contain one freely watched signal");
+const scoutCountWithActivePositions = api.state.scoutQueue.length;
+assert(!api.addScoutCandidate(api.sampleSources[0]), "An active position must not return to the scout desk");
+assert(api.state.scoutQueue.length === scoutCountWithActivePositions, "Rejecting an active signal must not mutate the scout desk");
 assert(api.state.positions.every((position) => position.discoveryRank >= 1), "Every position needs a discovery rank");
 assert(api.growthFactor("breakout", 12) > api.growthFactor("breakout", 6), "Breakout curve must increase");
 assert(api.growthFactor("sleeper", 12) > api.growthFactor("sleeper", 4), "Sleeper curve must break out later");
@@ -123,8 +126,9 @@ assert(Math.abs(api.positionRatio(feedPosition, 7 * 60) - underlyingNextHourRati
 const harvestedSource = api.state.positions[0];
 const harvestResult = api.harvestPosition(harvestedSource.id, false);
 assert(harvestResult.payout >= 1000 && harvestResult.profit >= 0, "Harvest result must be lossless");
-assert(api.resultShareText(harvestResult).includes("떡상농장 v0.4"), "Share proof text should identify the v0.4 build");
+assert(api.resultShareText(harvestResult).includes("떡상농장 v0.4.1"), "Share proof text should identify the v0.4.1 build");
 assert(api.state.harvestedSourceIds.includes(harvestedSource.sourceId), "Harvested source should be locked from re-entry");
+assert(!api.addScoutCandidate(harvestedSource), "A harvested signal must not return to the scout desk");
 api.openCandidate({ ...api.sampleSources[0], url: harvestedSource.url });
 assert(api.getPendingCandidate() === null, "A harvested link must not become a new candidate");
 
@@ -153,6 +157,21 @@ const migratedV3 = api.migrateState({
 });
 assert(migratedV3.scoutQueue.length === 1, "A v0.3 watchlist signal should migrate into the scout desk");
 assert(migratedV3.scoutQueue[0].sourceId === legacyWatchedId, "Migrated scout identity should remain stable");
+
+const lockedSource = api.sampleSources[4];
+const lockedPosition = api.createPosition(lockedSource, 0);
+const migratedV4 = api.migrateState({
+  balance: 1000,
+  virtualMinutes: 0,
+  positions: [lockedPosition],
+  harvests: [],
+  harvestedSourceIds: [],
+  watchlist: [lockedPosition.sourceId],
+  scoutQueue: [api.createScoutEntry(lockedSource, 0)],
+  notifications: [],
+  currentView: "discover",
+});
+assert(migratedV4.scoutQueue.length === 0, "Migration should remove active signals left in the v0.4 scout desk");
 
 api.advanceTime(60);
 assert(api.state.virtualMinutes === 60, "Clock advance should mutate virtual time");

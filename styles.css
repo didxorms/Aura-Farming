@@ -2286,7 +2286,7 @@ button:disabled {
 
 .candidate-compare-heading {
   display: flex;
-  padding-bottom: 7px;
+  padding-bottom: 9px;
   align-items: flex-end;
   justify-content: space-between;
   gap: 10px;
@@ -2294,43 +2294,44 @@ button:disabled {
 }
 
 .candidate-compare-heading h3,
-.candidate-compare-heading p {
+.candidate-compare-heading p,
+.candidate-compare-heading .eyebrow {
   margin: 0;
 }
 
 .candidate-compare-heading h3 {
-  font-size: 15px;
+  margin-top: 2px;
+  font-size: 16px;
 }
 
-.candidate-compare-heading p {
+.candidate-compare-heading > p {
+  max-width: 145px;
   color: var(--muted);
   font-size: 8px;
+  line-height: 1.35;
   text-align: right;
 }
 
-.candidate-comparison-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1.35fr) repeat(3, minmax(0, 0.7fr));
-  min-height: 53px;
-  align-items: stretch;
-  border-right: 1.5px solid var(--line);
-  border-bottom: 1.5px solid var(--line);
-  border-left: 1.5px solid var(--line);
+.comparison-card {
+  width: 100%;
+  padding: 0;
+  margin-top: 8px;
+  overflow: hidden;
+  color: var(--ink);
+  border: 1.5px solid var(--line);
+  background: var(--white);
+  font: inherit;
+  text-align: left;
 }
 
-.candidate-comparison-row.is-candidate {
+.comparison-card--candidate {
   border-color: var(--ink);
   background: rgba(200, 255, 61, 0.28);
+  box-shadow: 3px 3px 0 var(--ink);
 }
 
 .comparison-position {
-  width: 100%;
-  padding: 0;
-  color: var(--ink);
-  border-top: 0;
-  background: transparent;
-  font: inherit;
-  text-align: left;
+  background: var(--paper);
 }
 
 button.comparison-position {
@@ -2343,42 +2344,120 @@ button.comparison-position.is-selected {
 }
 
 button.comparison-position.is-selected {
-  box-shadow: inset 5px 0 0 var(--violet);
+  border-color: var(--ink);
+  box-shadow: inset 6px 0 0 var(--violet), 3px 3px 0 var(--ink);
 }
 
-.candidate-comparison-row > div {
+.comparison-card-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 58px;
+  padding: 9px 10px;
+  align-items: center;
+  gap: 9px;
+  border-bottom: 1px solid var(--line);
+}
+
+.comparison-card-head > div {
+  min-width: 0;
+}
+
+.comparison-kicker {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--muted);
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.055em;
+}
+
+.comparison-card-head strong {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 950;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.comparison-status {
+  padding: 5px 6px;
+  color: var(--white);
+  border: 1.5px solid var(--ink);
+  background: var(--ink);
+  font-size: 7px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.comparison-card--candidate .comparison-status {
+  color: var(--ink);
+  background: var(--acid);
+}
+
+.comparison-card-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.comparison-card-metrics > div {
   display: flex;
   min-width: 0;
-  padding: 8px 7px;
+  min-height: 51px;
+  padding: 8px 9px;
   justify-content: center;
   flex-direction: column;
 }
 
-.candidate-comparison-row > div + div {
+.comparison-card-metrics > div:nth-child(even) {
   border-left: 1px solid var(--line);
 }
 
-.candidate-comparison-row span,
-.candidate-comparison-row strong {
+.comparison-card-metrics > div:nth-child(n + 3) {
+  border-top: 1px solid var(--line);
+}
+
+.comparison-card-metrics span,
+.comparison-card-metrics strong {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.candidate-comparison-row span {
+.comparison-card-metrics span {
   color: var(--muted);
   font-size: 7px;
-  font-weight: 750;
+  font-weight: 800;
 }
 
-.candidate-comparison-row strong {
-  margin-top: 2px;
-  font-size: 10px;
+.comparison-card-metrics strong {
+  margin-top: 3px;
+  font-family: var(--display);
+  font-size: 14px;
 }
 
-.candidate-comparison-row .comparison-title strong {
+.comparison-empty {
+  margin-top: 8px;
+  padding: 18px 14px;
+  border: 1.5px dashed var(--line);
+  text-align: center;
+}
+
+.comparison-empty strong,
+.comparison-empty span {
+  display: block;
+}
+
+.comparison-empty strong {
   font-size: 11px;
+}
+
+.comparison-empty span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 8px;
 }
 
 .candidate-watch-action {
@@ -2699,6 +2778,19 @@ button.journal-card:hover {
 
   .candidate-card {
     grid-template-columns: 135px 1fr;
+  }
+
+  .comparison-card-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .comparison-card-metrics > div:nth-child(n) {
+    border-top: 0;
+    border-left: 0;
+  }
+
+  .comparison-card-metrics > div + div {
+    border-left: 1px solid var(--line);
   }
 }
 
