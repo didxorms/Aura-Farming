@@ -1,10 +1,13 @@
 {
   "name": "viral-farm-prototype",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
-  "description": "SNS 바이럴 포지션 게임의 모바일 웹 프로토타입",
+  "description": "SNS 영상의 떡상을 먼저 발견하는 모바일 웹 게임 프로토타입",
+  "engines": {
+    "node": ">=22.15.0"
+  },
   "scripts": {
-    "start": "node server.js",
-    "check": "node --check app.js && node --check server.js && node tests/test-logic.cjs"
+    "start": "node --use-system-ca server.js",
+    "check": "node --check app.js && node --check server.js && node tests/test-youtube.cjs && node tests/test-logic.cjs"
   }
 }
