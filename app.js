@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "0.4.1";
-const STORAGE_KEY = "viral-field-prototype-v4";
-const LEGACY_STORAGE_KEYS = ["viral-field-prototype-v3", "viral-field-prototype-v2", "viral-field-prototype-v1"];
+const APP_VERSION = "0.5.0";
+const STORAGE_KEY = "viral-field-prototype-v5";
+const LEGACY_STORAGE_KEYS = ["viral-field-prototype-v4", "viral-field-prototype-v3", "viral-field-prototype-v2", "viral-field-prototype-v1"];
 const MAX_SLOTS = 4;
 const SEED_COST = 1000;
 const AUTO_HARVEST_MINUTES = 24 * 60;
@@ -191,6 +191,7 @@ const elements = {
   rankValue: document.querySelector("#rankValue"),
   linkForm: document.querySelector("#linkForm"),
   linkInput: document.querySelector("#linkInput"),
+  analyzeButton: document.querySelector("#analyzeButton"),
   sampleButton: document.querySelector("#sampleButton"),
   pasteButton: document.querySelector("#pasteButton"),
   advanceOneButton: document.querySelector("#advanceOneButton"),
@@ -295,6 +296,7 @@ function migrateState(savedState) {
       discoveryRank: position.discoveryRank || discoveryRankFor(position),
       discoverersAtPlant: position.discoverersAtPlant || discoveryRankFor(position),
       curveOffsetHours: position.curveOffsetHours || 0,
+      thumbnailUrl: position.thumbnailUrl || youtubeThumbnailForUrl(position.url),
     })),
     harvests: savedState.harvests.map((harvest) => {
       const discoveryRank = harvest.discoveryRank || 1 + (hashString(harvest.sourceId || harvest.url || harvest.title) % 120);
@@ -343,6 +345,11 @@ function createScoutEntry(source, addedMinute = 0, alertMode = "all") {
     title: source.title,
     handle: source.handle,
     platform: source.platform,
+    videoId: source.videoId || youtubeVideoId(source.url),
+    thumbnailUrl: source.thumbnailUrl || youtubeThumbnailForUrl(source.url),
+    publishedAt: source.publishedAt || null,
+    metadataMode: source.metadataMode || "simulated",
+    statsMode: source.statsMode || "simulated",
     initialViews: Math.max(1, Math.round(source.initialViews || source.entryViews || 1)),
     ageHours: Math.max(1, Number(source.ageHours) || 1),
     curve: source.curve || "steady",
@@ -377,6 +384,11 @@ function createPosition(source, plantedMinute = state.virtualMinutes) {
     title: source.title,
     handle: source.handle,
     platform: source.platform,
+    videoId: source.videoId || youtubeVideoId(source.url),
+    thumbnailUrl: source.thumbnailUrl || youtubeThumbnailForUrl(source.url),
+    publishedAt: source.publishedAt || null,
+    metadataMode: source.metadataMode || "simulated",
+    statsMode: source.statsMode || "simulated",
     initialViews: source.initialViews,
     entryViews: source.initialViews,
     ageHours: source.ageHours,
@@ -405,16 +417,46 @@ function hashString(value) {
   return hash >>> 0;
 }
 
+function youtubeVideoId(rawUrl) {
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  const segments = url.pathname.split("/").filter(Boolean);
+  let videoId = null;
+  if (host === "youtu.be") {
+    [videoId] = segments;
+  } else if (["youtube.com", "m.youtube.com", "music.youtube.com"].includes(host)) {
+    if (url.pathname === "/watch") videoId = url.searchParams.get("v");
+    if (["shorts", "embed", "live"].includes(segments[0])) videoId = segments[1];
+  }
+  return /^[A-Za-z0-9_-]{6,20}$/.test(videoId || "") ? videoId : null;
+}
+
+function canonicalYoutubeUrl(videoId) {
+  return `https://www.youtube.com/watch?v=${videoId}`;
+}
+
+function youtubeThumbnailForUrl(rawUrl) {
+  const videoId = youtubeVideoId(rawUrl);
+  return /^[A-Za-z0-9_-]{11}$/.test(videoId || "")
+    ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`
+    : null;
+}
+
 function canonicalSourceId(rawUrl) {
   try {
     const url = new URL(rawUrl);
     const host = url.hostname.replace(/^www\./, "");
     const segments = url.pathname.split("/").filter(Boolean);
 
-    if (host.includes("youtube.com")) {
-      return `yt:${url.searchParams.get("v") || segments.at(-1) || hashString(rawUrl)}`;
-    }
-    if (host === "youtu.be") return `yt:${segments[0] || hashString(rawUrl)}`;
+    const videoId = youtubeVideoId(rawUrl);
+    if (videoId) return `yt:${videoId}`;
+    if (host.includes("youtube.com") || host === "youtu.be") return `yt:${hashString(rawUrl)}`;
     if (host.includes("instagram.com")) return `ig:${segments.at(-1) || hashString(rawUrl)}`;
     if (host.includes("tiktok.com")) return `tt:${segments.at(-1) || hashString(rawUrl)}`;
     return `${host}:${segments.at(-1) || hashString(rawUrl)}`;
@@ -457,6 +499,50 @@ function sourceFromUrl(rawUrl) {
     paletteIndex: (seed >>> 11) % palette.length,
     baseDiscoverers: Math.max(0, Math.floor((Math.log10(initialViews + 10) - 2) * 7 + ageHours * 0.35 + (seed % 5))),
   };
+}
+
+async function sourceFromYoutube(rawUrl) {
+  const validatedSource = sourceFromUrl(rawUrl);
+  const videoId = youtubeVideoId(rawUrl);
+  if (!videoId) return validatedSource;
+
+  const canonicalUrl = canonicalYoutubeUrl(videoId);
+  const source = sourceFromUrl(canonicalUrl);
+  const fallback = {
+    ...source,
+    videoId,
+    url: canonicalUrl,
+    thumbnailUrl: youtubeThumbnailForUrl(rawUrl),
+    metadataMode: "thumbnail-only",
+    statsMode: "simulated",
+  };
+
+  try {
+    const response = await fetch(`/api/youtube?url=${encodeURIComponent(rawUrl)}`);
+    const metadata = await response.json();
+    if (!response.ok) throw new Error(metadata.error || "YouTube 정보를 불러오지 못했습니다.");
+    return {
+      ...fallback,
+      ...metadata,
+      url: canonicalUrl,
+      platform: new URL(rawUrl).pathname.startsWith("/shorts/") ? "YOUTUBE SHORTS" : "YOUTUBE",
+      title: metadata.title || fallback.title,
+      handle: metadata.handle || fallback.handle,
+      thumbnailUrl: metadata.thumbnailUrl || fallback.thumbnailUrl,
+      initialViews: Number(metadata.initialViews) > 0 ? Number(metadata.initialViews) : fallback.initialViews,
+      ageHours: Number(metadata.ageHours) > 0 ? Number(metadata.ageHours) : fallback.ageHours,
+      baseDiscoverers: baseDiscovererCount({
+        ...fallback,
+        initialViews: Number(metadata.initialViews) > 0 ? Number(metadata.initialViews) : fallback.initialViews,
+        ageHours: Number(metadata.ageHours) > 0 ? Number(metadata.ageHours) : fallback.ageHours,
+      }),
+    };
+  } catch (error) {
+    return {
+      ...fallback,
+      metadataError: error.message || "YouTube 메타데이터를 불러오지 못했습니다.",
+    };
+  }
 }
 
 function detectPlatform(hostname) {
@@ -749,6 +835,9 @@ function plotCardMarkup(position) {
   const colors = palette[position.paletteIndex % palette.length];
   const values = positionSeries(position, 8);
   const scale = clamp(0.62 + Math.log2(Math.max(ratio, 1)) * 0.1, 0.62, 1.28);
+  const thumbnailUrl = safeImageUrl(position.thumbnailUrl);
+  const chartInk = thumbnailUrl ? "#fffef6" : colors.ink;
+  const chartFill = thumbnailUrl ? "rgba(23,26,21,0.46)" : "rgba(255,255,255,0.28)";
 
   return `
     <button
@@ -757,11 +846,12 @@ function plotCardMarkup(position) {
       data-position-id="${position.id}"
       aria-label="${escapeHtml(position.title)} 포지션 상세 보기"
     >
-      <div class="plot-visual" style="--plot-color:${colors.color};--plot-ink:${colors.ink};--signal-scale:${scale}">
+      <div class="plot-visual ${thumbnailUrl ? "has-thumbnail" : ""}" style="--plot-color:${colors.color};--plot-ink:${colors.ink};--signal-scale:${scale}">
+        ${thumbnailUrl ? `<img class="youtube-thumbnail" src="${escapeHtml(thumbnailUrl)}" alt="" loading="lazy" data-youtube-thumbnail />` : ""}
         <span class="platform-badge">${shortPlatform(position.platform)}</span>
         <span class="discovery-badge">#${formatNumber(position.discoveryRank)} 발견</span>
-        <span class="signal-orb" aria-hidden="true"></span>
-        <div class="plot-spark" aria-hidden="true">${sparklineSvg(values, colors.ink, "rgba(255,255,255,0.28)", 2)}</div>
+        ${thumbnailUrl ? `<span class="crop-label">THUMBNAIL CROP</span>` : `<span class="signal-orb" aria-hidden="true"></span>`}
+        <div class="plot-spark" aria-hidden="true">${sparklineSvg(values, chartInk, chartFill, 2)}</div>
       </div>
       <div class="plot-body">
         <div class="plot-title-row">
@@ -1156,6 +1246,8 @@ function renderCandidateSheet() {
   const affordability = state.balance >= SEED_COST;
   const watched = isSourceWatched(sourceId);
   const candidateSignal = signalReading(source, sourceMomentumAtOffset(source));
+  const thumbnailUrl = safeImageUrl(source.thumbnailUrl);
+  const sourceNote = youtubeSourceNote(source);
   const comparisonRows = state.positions.map((position) => {
     const selected = position.id === selectedReplacementId;
     const currentViews = viewsAt(position);
@@ -1186,12 +1278,14 @@ function renderCandidateSheet() {
 
   elements.candidateContent.innerHTML = `
     <div class="candidate-card">
-      <div class="candidate-cover" style="--candidate-color:${colors.color}">
+      <div class="candidate-cover ${thumbnailUrl ? "has-thumbnail" : ""}" style="--candidate-color:${colors.color}">
+        ${thumbnailUrl ? `<img class="youtube-thumbnail" src="${escapeHtml(thumbnailUrl)}" alt="" loading="lazy" data-youtube-thumbnail />` : ""}
         <span class="cover-platform">${shortPlatform(source.platform)}</span>
       </div>
       <div class="candidate-info">
         <h3>${escapeHtml(source.title)}</h3>
         <p>${escapeHtml(source.handle)}</p>
+        ${sourceNote ? `<div class="youtube-source-note">${sourceNote}</div>` : ""}
         <div class="sheet-stats">
           <div class="sheet-stat"><span>현재 조회</span><strong>${formatCompact(source.initialViews)}</strong></div>
           <div class="sheet-stat"><span>업로드</span><strong>${source.ageHours}시간 전</strong></div>
@@ -1311,15 +1405,19 @@ function openPosition(positionId) {
   const payout = payoutAt(position);
   const profit = payout - SEED_COST;
   const discoverers = discovererCountAt(position);
+  const thumbnailUrl = safeImageUrl(position.thumbnailUrl);
+  const sourceNote = youtubeSourceNote(position);
 
   elements.positionContent.innerHTML = `
     <div class="position-hero">
-      <div class="position-cover" style="--candidate-color:${colors.color}">
+      <div class="position-cover ${thumbnailUrl ? "has-thumbnail" : ""}" style="--candidate-color:${colors.color}">
+        ${thumbnailUrl ? `<img class="youtube-thumbnail" src="${escapeHtml(thumbnailUrl)}" alt="" loading="lazy" data-youtube-thumbnail />` : ""}
         <span class="cover-platform">${shortPlatform(position.platform)}</span>
       </div>
       <div class="position-info">
         <h3>${escapeHtml(position.title)}</h3>
         <p>${escapeHtml(position.handle)}</p>
+        ${sourceNote ? `<div class="youtube-source-note">${sourceNote}</div>` : ""}
         <div class="sheet-stats">
           <div class="sheet-stat"><span>현재 조회</span><strong>${formatCompact(current)}</strong></div>
           <div class="sheet-stat"><span>상승률</span><strong>+${formatPercent(growth)}</strong></div>
@@ -1365,6 +1463,11 @@ function harvestPosition(positionId, showResult = true) {
     title: position.title,
     handle: position.handle,
     platform: position.platform,
+    videoId: position.videoId,
+    thumbnailUrl: position.thumbnailUrl,
+    publishedAt: position.publishedAt,
+    metadataMode: position.metadataMode,
+    statsMode: position.statsMode,
     entryViews: position.entryViews,
     currentViews,
     payout,
@@ -1435,7 +1538,7 @@ function resultGrade(ratio) {
 function resultShareText(result) {
   const percentile = discoveryPercentile(result.discoveryRank, result.discoverersAtHarvest);
   const discoveryText = result.discoveryRank === 1 ? "최초 발견자" : `${formatNumber(result.discoveryRank)}번째 발견 · 상위 ${percentile}%`;
-  return `나는 “${result.title}”을 ${formatCompact(result.entryViews)}뷰에서 발견했다. ${discoveryText} · 현재 ${formatCompact(result.currentViews)}뷰 · 떡상농장 v0.4.1`;
+  return `나는 “${result.title}”을 ${formatCompact(result.entryViews)}뷰에서 발견했다. ${discoveryText} · 현재 ${formatCompact(result.currentViews)}뷰 · 떡상농장 v${APP_VERSION}`;
 }
 
 function wrapCanvasText(context, text, maxWidth) {
@@ -1548,7 +1651,7 @@ function resultCardBlob(result) {
     context.fillText("떡상농장 · 내가 먼저 본 인터넷의 역사", 92, 1310);
     context.textAlign = "right";
     context.fillStyle = "#c8ff3d";
-    context.fillText("BUILD 0.4.1", 988, 1310);
+    context.fillText(`BUILD ${APP_VERSION}`, 988, 1310);
 
     canvas.toBlob((blob) => {
       if (blob) resolve(blob);
@@ -1748,7 +1851,8 @@ function formatRemaining(position) {
 }
 
 function shortPlatform(platform) {
-  if (platform.includes("YOUTUBE")) return "YT SHORTS";
+  if (platform.includes("YOUTUBE SHORTS")) return "YT SHORTS";
+  if (platform.includes("YOUTUBE")) return "YOUTUBE";
   if (platform.includes("INSTAGRAM")) return "REELS";
   if (platform.includes("TIKTOK")) return "TIKTOK";
   return "LINK";
@@ -1756,6 +1860,23 @@ function shortPlatform(platform) {
 
 function shortTitle(title) {
   return title.length > 20 ? `${title.slice(0, 20)}…` : title;
+}
+
+function safeImageUrl(value) {
+  if (!value) return "";
+  try {
+    const parsed = new URL(value);
+    return ["http:", "https:"].includes(parsed.protocol) ? parsed.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function youtubeSourceNote(source) {
+  if (source.metadataMode === "youtube-api") return "YOUTUBE SYNC · 실제 시작 조회수 · 이후 성장 데모";
+  if (source.metadataMode === "youtube-oembed") return "YOUTUBE META · 실제 제목과 썸네일 · 조회수는 데모";
+  if (source.metadataMode === "thumbnail-only" && source.thumbnailUrl) return "YOUTUBE CROP · 실제 썸네일 · 나머지는 데모";
+  return "";
 }
 
 function clamp(value, min, max) {
@@ -1780,12 +1901,28 @@ function hexToRgba(hex, alpha) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-elements.linkForm.addEventListener("submit", (event) => {
+elements.linkForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const buttonContent = elements.analyzeButton.innerHTML;
+  elements.analyzeButton.disabled = true;
+  elements.analyzeButton.setAttribute?.("aria-busy", "true");
+  elements.analyzeButton.textContent = "링크 읽는 중…";
   try {
-    openCandidate(sourceFromUrl(elements.linkInput.value));
+    const source = await sourceFromYoutube(elements.linkInput.value);
+    openCandidate(source);
+    if (source.metadataError) {
+      showToast("YouTube 연결이 잠시 불안정해 썸네일 중심의 데모 정보로 열었습니다.");
+    } else if (source.metadataMode === "youtube-oembed") {
+      showToast("실제 YouTube 제목과 썸네일을 가져왔습니다. 조회수는 데모 값입니다.");
+    } else if (source.metadataMode === "youtube-api") {
+      showToast("실제 YouTube 정보와 조회수를 가져왔습니다.");
+    }
   } catch (error) {
     showToast(error.message || "링크를 읽지 못했습니다.");
+  } finally {
+    elements.analyzeButton.disabled = false;
+    elements.analyzeButton.removeAttribute?.("aria-busy");
+    elements.analyzeButton.innerHTML = buttonContent;
   }
 });
 
@@ -1914,6 +2051,13 @@ document.addEventListener("click", (event) => {
   }
   showView(nav.dataset.nav);
 });
+
+document.addEventListener("error", (event) => {
+  const image = event.target.closest?.("[data-youtube-thumbnail]");
+  if (!image) return;
+  image.hidden = true;
+  image.parentElement?.classList.remove("has-thumbnail");
+}, true);
 
 elements.modalBackdrop.addEventListener("click", () => closeSheets());
 

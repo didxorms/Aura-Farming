@@ -58,7 +58,7 @@ const context = {
 context.globalThis = context;
 
 const appPath = path.resolve(__dirname, "../app.js");
-const source = `${fs.readFileSync(appPath, "utf8")}\n;globalThis.__viralTest = { sourceFromUrl, growthFactor, calculateEarlyBonus, formatCompact, formatDuration, state, advanceTime, createPosition, sampleSources, payoutAt, positionRatio, discovererCountAt, discoveryPercentile, harvestPosition, openCandidate, migrateState, feedViewsAt, sourceDiscovererCountAt, sourceSnapshotAt, feedMomentum, createScoutEntry, scoutViewsAt, scoutDiscovererCountAt, scoutSnapshotAt, scoutMomentum, addScoutCandidate, removeScoutCandidate, resultShareText, getPendingCandidate: () => pendingCandidate };`;
+const source = `${fs.readFileSync(appPath, "utf8")}\n;globalThis.__viralTest = { sourceFromUrl, youtubeVideoId, canonicalSourceId, youtubeThumbnailForUrl, growthFactor, calculateEarlyBonus, formatCompact, formatDuration, state, advanceTime, createPosition, sampleSources, payoutAt, positionRatio, discovererCountAt, discoveryPercentile, harvestPosition, openCandidate, migrateState, feedViewsAt, sourceDiscovererCountAt, sourceSnapshotAt, feedMomentum, createScoutEntry, scoutViewsAt, scoutDiscovererCountAt, scoutSnapshotAt, scoutMomentum, addScoutCandidate, removeScoutCandidate, resultShareText, getPendingCandidate: () => pendingCandidate };`;
 vm.createContext(context);
 vm.runInContext(source, context, { filename: appPath });
 
@@ -83,6 +83,19 @@ assert(api.formatCompact(2300000) === "230만", "Compact formatter is incorrect"
 const parsed = api.sourceFromUrl("https://youtube.com/shorts/arbitrary-video-id");
 assert(parsed.platform === "YOUTUBE SHORTS", "YouTube URL should be detected as Shorts");
 assert(parsed.initialViews > 0 && parsed.ageHours > 0, "Generated source needs viable metadata");
+const realYoutubeId = "dQw4w9WgXcQ";
+assert(api.youtubeVideoId(`https://youtu.be/${realYoutubeId}?si=share`) === realYoutubeId, "A shared YouTube URL should expose its video ID");
+assert(api.youtubeVideoId(`https://www.youtube.com/shorts/${realYoutubeId}`) === realYoutubeId, "A Shorts URL should expose its video ID");
+assert(api.canonicalSourceId(`https://youtu.be/${realYoutubeId}`) === api.canonicalSourceId(`https://www.youtube.com/watch?v=${realYoutubeId}`), "YouTube URL variants should share one identity");
+assert(api.youtubeThumbnailForUrl(`https://www.youtube.com/watch?v=${realYoutubeId}`).includes(realYoutubeId), "A real YouTube video should derive a thumbnail crop");
+const youtubePosition = api.createPosition({
+  ...parsed,
+  url: `https://www.youtube.com/watch?v=${realYoutubeId}`,
+  thumbnailUrl: `https://i.ytimg.com/vi/${realYoutubeId}/hqdefault.jpg`,
+  metadataMode: "youtube-oembed",
+});
+assert(youtubePosition.thumbnailUrl.includes(realYoutubeId), "A planted YouTube signal should retain its thumbnail crop");
+assert(youtubePosition.metadataMode === "youtube-oembed", "A planted YouTube signal should retain its metadata provenance");
 const scoutCountBefore = api.state.scoutQueue.length;
 assert(api.addScoutCandidate(parsed, "surge"), "An arbitrary link should be saved as a scout candidate");
 assert(api.state.scoutQueue.length === scoutCountBefore + 1, "Scout candidates should not have a separate slot cap");
@@ -126,7 +139,7 @@ assert(Math.abs(api.positionRatio(feedPosition, 7 * 60) - underlyingNextHourRati
 const harvestedSource = api.state.positions[0];
 const harvestResult = api.harvestPosition(harvestedSource.id, false);
 assert(harvestResult.payout >= 1000 && harvestResult.profit >= 0, "Harvest result must be lossless");
-assert(api.resultShareText(harvestResult).includes("떡상농장 v0.4.1"), "Share proof text should identify the v0.4.1 build");
+assert(api.resultShareText(harvestResult).includes("떡상농장 v0.5.0"), "Share proof text should identify the v0.5 build");
 assert(api.state.harvestedSourceIds.includes(harvestedSource.sourceId), "Harvested source should be locked from re-entry");
 assert(!api.addScoutCandidate(harvestedSource), "A harvested signal must not return to the scout desk");
 api.openCandidate({ ...api.sampleSources[0], url: harvestedSource.url });
