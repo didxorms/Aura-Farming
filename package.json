@@ -1,6 +1,6 @@
 {
   "name": "viral-farm-prototype",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "description": "SNS 영상의 떡상을 먼저 발견하는 모바일 웹 게임 프로토타입",
   "engines": {

@@ -536,6 +536,79 @@ button:disabled {
   border-bottom: 2px solid var(--ink);
 }
 
+.youtube-sync-bar {
+  display: flex;
+  margin-top: 10px;
+  padding: 9px 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--white);
+  border: 2px solid var(--ink);
+  background: var(--ink);
+}
+
+.youtube-sync-bar > div {
+  min-width: 0;
+}
+
+.youtube-sync-bar strong,
+.youtube-sync-bar small {
+  display: block;
+}
+
+.youtube-sync-bar strong {
+  font-family: var(--display);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.youtube-sync-bar strong span {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--orange);
+  box-shadow: 0 0 0 3px rgba(255, 103, 53, 0.22);
+}
+
+.youtube-sync-bar small {
+  margin-top: 3px;
+  overflow: hidden;
+  color: #b8bbb2;
+  font-size: 8px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.youtube-sync-bar small[data-state="live"] {
+  color: var(--acid);
+}
+
+.youtube-sync-bar small[data-state="needs-key"] {
+  color: #ffad91;
+}
+
+.youtube-sync-bar button {
+  flex: none;
+  padding: 7px 8px;
+  cursor: pointer;
+  color: var(--ink);
+  border: 1.5px solid var(--white);
+  background: var(--acid);
+  font-size: 8px;
+  font-weight: 950;
+  box-shadow: 2px 2px 0 var(--white);
+}
+
+.youtube-sync-bar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  box-shadow: none;
+}
+
 .text-button {
   padding: 5px 0;
   cursor: pointer;
@@ -755,6 +828,17 @@ button:disabled {
   color: var(--muted);
   font-size: 9px;
   font-weight: 700;
+}
+
+.plot-live-meta {
+  width: fit-content;
+  margin: -4px 0 7px;
+  padding: 3px 5px;
+  color: #315100;
+  border: 1px solid #315100;
+  background: rgba(200, 255, 61, 0.36);
+  font-size: 7px;
+  font-weight: 950;
 }
 
 .plot-metrics {

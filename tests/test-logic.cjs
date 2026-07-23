@@ -58,7 +58,7 @@ const context = {
 context.globalThis = context;
 
 const appPath = path.resolve(__dirname, "../app.js");
-const source = `${fs.readFileSync(appPath, "utf8")}\n;globalThis.__viralTest = { sourceFromUrl, youtubeVideoId, canonicalSourceId, youtubeThumbnailForUrl, growthFactor, calculateEarlyBonus, formatCompact, formatDuration, state, advanceTime, createPosition, sampleSources, payoutAt, positionRatio, discovererCountAt, discoveryPercentile, harvestPosition, openCandidate, migrateState, feedViewsAt, sourceDiscovererCountAt, sourceSnapshotAt, feedMomentum, createScoutEntry, scoutViewsAt, scoutDiscovererCountAt, scoutSnapshotAt, scoutMomentum, addScoutCandidate, removeScoutCandidate, resultShareText, getPendingCandidate: () => pendingCandidate };`;
+const source = `${fs.readFileSync(appPath, "utf8")}\n;globalThis.__viralTest = { sourceFromUrl, youtubeVideoId, canonicalSourceId, youtubeThumbnailForUrl, growthFactor, calculateEarlyBonus, formatCompact, formatDuration, state, advanceTime, createPosition, sampleSources, payoutAt, positionRatio, positionSeries, viewsAt, usesLiveYoutubeStats, applyYoutubeViewSnapshot, normalizeViewSnapshots, formatSignedPercent, discovererCountAt, discoveryPercentile, harvestPosition, openCandidate, migrateState, feedViewsAt, sourceDiscovererCountAt, sourceSnapshotAt, feedMomentum, createScoutEntry, scoutViewsAt, scoutDiscovererCountAt, scoutSnapshotAt, scoutMomentum, addScoutCandidate, removeScoutCandidate, resultShareText, getPendingCandidate: () => pendingCandidate };`;
 vm.createContext(context);
 vm.runInContext(source, context, { filename: appPath });
 
@@ -96,6 +96,14 @@ const youtubePosition = api.createPosition({
 });
 assert(youtubePosition.thumbnailUrl.includes(realYoutubeId), "A planted YouTube signal should retain its thumbnail crop");
 assert(youtubePosition.metadataMode === "youtube-oembed", "A planted YouTube signal should retain its metadata provenance");
+assert(!api.usesLiveYoutubeStats(youtubePosition), "An oEmbed position should begin in demo growth mode");
+const firstActualSnapshot = api.applyYoutubeViewSnapshot(youtubePosition, 10000, "2026-07-24T00:00:00.000Z");
+assert(firstActualSnapshot.started && youtubePosition.actualEntryViews === 10000, "First live sync should establish the actual view baseline");
+const nextActualSnapshot = api.applyYoutubeViewSnapshot(youtubePosition, 12500, "2026-07-24T00:05:00.000Z");
+assert(nextActualSnapshot.delta === 2500, "Later live sync should report the actual view increase");
+assert(api.viewsAt(youtubePosition) === 12500 && api.positionRatio(youtubePosition) === 1.25, "Live positions should use actual views instead of the demo clock");
+assert(api.positionSeries(youtubePosition).at(-1) === 12500, "Live charts should end at the latest actual snapshot");
+assert(api.formatSignedPercent(-2.5) === "−2.5%", "Signed growth should preserve audited view decreases");
 const scoutCountBefore = api.state.scoutQueue.length;
 assert(api.addScoutCandidate(parsed, "surge"), "An arbitrary link should be saved as a scout candidate");
 assert(api.state.scoutQueue.length === scoutCountBefore + 1, "Scout candidates should not have a separate slot cap");
@@ -139,7 +147,7 @@ assert(Math.abs(api.positionRatio(feedPosition, 7 * 60) - underlyingNextHourRati
 const harvestedSource = api.state.positions[0];
 const harvestResult = api.harvestPosition(harvestedSource.id, false);
 assert(harvestResult.payout >= 1000 && harvestResult.profit >= 0, "Harvest result must be lossless");
-assert(api.resultShareText(harvestResult).includes("떡상농장 v0.5.0"), "Share proof text should identify the v0.5 build");
+assert(api.resultShareText(harvestResult).includes("떡상농장 v0.6.0"), "Share proof text should identify the v0.6 build");
 assert(api.state.harvestedSourceIds.includes(harvestedSource.sourceId), "Harvested source should be locked from re-entry");
 assert(!api.addScoutCandidate(harvestedSource), "A harvested signal must not return to the scout desk");
 api.openCandidate({ ...api.sampleSources[0], url: harvestedSource.url });

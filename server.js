@@ -63,7 +63,7 @@ function bestThumbnail(thumbnails, fallback) {
 
 async function fetchJson(url) {
   const response = await fetch(url, {
-    headers: { "User-Agent": "ViralFieldPrototype/0.5" },
+    headers: { "User-Agent": "ViralFieldPrototype/0.6" },
     signal: AbortSignal.timeout(8_000),
   });
   if (!response.ok) {
@@ -103,6 +103,7 @@ async function fetchYoutubeMetadata(videoId) {
         publishedAt: item.snippet.publishedAt,
         ageHours: ageHoursFromPublishedAt(item.snippet.publishedAt),
         initialViews: Number(item.statistics?.viewCount) || null,
+        syncedAt: new Date().toISOString(),
         metadataMode: "youtube-api",
         statsMode: "youtube-api",
       };
@@ -122,8 +123,44 @@ async function fetchYoutubeMetadata(videoId) {
     publishedAt: null,
     ageHours: null,
     initialViews: null,
+    syncedAt: new Date().toISOString(),
     metadataMode: "youtube-oembed",
     statsMode: "simulated",
+  };
+}
+
+function normalizeYoutubeVideoIds(rawIds) {
+  const ids = Array.isArray(rawIds) ? rawIds : String(rawIds || "").split(",");
+  return Array.from(new Set(ids
+    .map((id) => String(id).trim())
+    .filter((id) => /^[A-Za-z0-9_-]{6,20}$/.test(id))))
+    .slice(0, 50);
+}
+
+async function fetchYoutubeStatistics(rawIds) {
+  const videoIds = normalizeYoutubeVideoIds(rawIds);
+  const syncedAt = new Date().toISOString();
+  if (!process.env.YOUTUBE_API_KEY?.trim()) {
+    return {
+      apiKeyConfigured: false,
+      items: [],
+      syncedAt,
+    };
+  }
+
+  const query = new URLSearchParams({
+    part: "statistics",
+    id: videoIds.join(","),
+    key: process.env.YOUTUBE_API_KEY.trim(),
+  });
+  const payload = await fetchJson(`https://www.googleapis.com/youtube/v3/videos?${query}`);
+  return {
+    apiKeyConfigured: true,
+    syncedAt,
+    items: (payload.items || []).map((item) => ({
+      videoId: item.id,
+      views: Number(item.statistics?.viewCount) || 0,
+    })),
   };
 }
 
@@ -152,6 +189,21 @@ async function handleYoutubeApi(requestUrl, response) {
       ? "공개된 YouTube 영상을 찾지 못했습니다."
       : "YouTube 정보를 불러오지 못했습니다. 잠시 뒤 다시 시도해 주세요.";
     sendJson(response, statusCode, { error: message });
+  }
+}
+
+async function handleYoutubeStatsApi(requestUrl, response) {
+  const videoIds = normalizeYoutubeVideoIds(requestUrl.searchParams.get("ids"));
+  if (videoIds.length === 0) {
+    sendJson(response, 400, { error: "조회할 YouTube 영상 ID가 없습니다." });
+    return;
+  }
+
+  try {
+    sendJson(response, 200, await fetchYoutubeStatistics(videoIds));
+  } catch (error) {
+    console.error("[youtube] statistics request failed:", error.cause?.message || error.message);
+    sendJson(response, 502, { error: "YouTube 조회수를 갱신하지 못했습니다." });
   }
 }
 
@@ -188,6 +240,10 @@ function createServer() {
       handleYoutubeApi(requestUrl, response);
       return;
     }
+    if (requestUrl.pathname === "/api/youtube/stats") {
+      handleYoutubeStatsApi(requestUrl, response);
+      return;
+    }
     serveStaticFile(requestUrl, response);
   });
 }
@@ -195,7 +251,7 @@ function createServer() {
 if (require.main === module) {
   createServer().listen(port, host, () => {
     const statsMode = process.env.YOUTUBE_API_KEY ? "metadata + live statistics" : "metadata + thumbnail";
-    console.log(`떡상농장 v0.5: http://${host}:${port} · YouTube ${statsMode}`);
+    console.log(`떡상농장 v0.6: http://${host}:${port} · YouTube ${statsMode}`);
   });
 }
 
@@ -205,5 +261,7 @@ module.exports = {
   createServer,
   extractYoutubeVideoId,
   fetchYoutubeMetadata,
+  fetchYoutubeStatistics,
+  normalizeYoutubeVideoIds,
   youtubeThumbnailUrl,
 };
