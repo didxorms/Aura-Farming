@@ -58,7 +58,7 @@ const context = {
 context.globalThis = context;
 
 const appPath = path.resolve(__dirname, "../app.js");
-const source = `${fs.readFileSync(appPath, "utf8")}\n;globalThis.__viralTest = { sourceFromUrl, growthFactor, calculateEarlyBonus, formatCompact, formatDuration, state, advanceTime, createPosition, sampleSources, payoutAt, positionRatio, discovererCountAt, discoveryPercentile, harvestPosition, openCandidate, migrateState, getPendingCandidate: () => pendingCandidate };`;
+const source = `${fs.readFileSync(appPath, "utf8")}\n;globalThis.__viralTest = { sourceFromUrl, growthFactor, calculateEarlyBonus, formatCompact, formatDuration, state, advanceTime, createPosition, sampleSources, payoutAt, positionRatio, discovererCountAt, discoveryPercentile, harvestPosition, openCandidate, migrateState, feedViewsAt, sourceDiscovererCountAt, sourceSnapshotAt, feedMomentum, getPendingCandidate: () => pendingCandidate };`;
 vm.createContext(context);
 vm.runInContext(source, context, { filename: appPath });
 
@@ -68,6 +68,7 @@ const assert = (condition, message) => {
 };
 
 assert(api.state.positions.length === 2, "Initial state should contain two active positions");
+assert(api.sampleSources.length === 12, "Discovery feed should contain twelve signals");
 assert(api.state.positions.every((position) => position.discoveryRank >= 1), "Every position needs a discovery rank");
 assert(api.growthFactor("breakout", 12) > api.growthFactor("breakout", 6), "Breakout curve must increase");
 assert(api.growthFactor("sleeper", 12) > api.growthFactor("sleeper", 4), "Sleeper curve must break out later");
@@ -95,6 +96,17 @@ assert(api.payoutAt(position, 0) === 1000, "A zero-growth harvest must return th
 assert(api.payoutAt(position, 12 * 60) >= 1000, "Payout must never fall below the seed cost");
 assert(api.discovererCountAt(position, 12 * 60) > position.discoveryRank, "Discoverer count should grow after planting");
 
+const feedSource = api.sampleSources[7];
+assert(api.feedViewsAt(feedSource, 6 * 60) > feedSource.initialViews, "Feed views should move with the prototype clock");
+assert(api.sourceDiscovererCountAt(feedSource, 6 * 60) > feedSource.baseDiscoverers, "Competing discoverers should enter feed signals");
+assert(api.feedMomentum(feedSource, 0) > 0, "Feed signals need a readable momentum value");
+const feedSnapshot = api.sourceSnapshotAt(feedSource, 6 * 60);
+assert(feedSnapshot.initialViews === api.feedViewsAt(feedSource, 6 * 60), "Planting should snapshot current feed views");
+assert(feedSnapshot.baseDiscoverers === api.sourceDiscovererCountAt(feedSource, 6 * 60), "Planting should snapshot current discovery competition");
+const feedPosition = api.createPosition(feedSnapshot, 6 * 60);
+const underlyingNextHourRatio = api.feedViewsAt(feedSource, 7 * 60) / api.feedViewsAt(feedSource, 6 * 60);
+assert(Math.abs(api.positionRatio(feedPosition, 7 * 60) - underlyingNextHourRatio) < 0.02, "A planted feed signal should keep its existing growth phase");
+
 const harvestedSource = api.state.positions[0];
 const harvestResult = api.harvestPosition(harvestedSource.id, false);
 assert(harvestResult.payout >= 1000 && harvestResult.profit >= 0, "Harvest result must be lossless");
@@ -111,14 +123,20 @@ const migrated = api.migrateState({
 assert(migrated.balance === 550, "v0.1 loss should be reimbursed during migration");
 assert(migrated.harvests[0].payout === 1000 && migrated.harvests[0].profit === 0, "Legacy harvest should migrate to a lossless record");
 assert(migrated.harvestedSourceIds.includes("yt:legacy"), "Migrated harvest should lock the source ID");
+assert(Array.isArray(migrated.watchlist) && Array.isArray(migrated.notifications), "v0.3 migration should backfill social feed state");
+assert(migrated.currentView === "field", "v0.3 migration should open on the field");
 
 api.advanceTime(60);
 assert(api.state.virtualMinutes === 60, "Clock advance should mutate virtual time");
+assert(api.state.notifications.length > 0, "Clock advance should retain scout wire notifications");
 
 console.log(JSON.stringify({
   activePositionsAfterHarvest: api.state.positions.length,
   generatedPlatform: parsed.platform,
   generatedCurve: parsed.curve,
+  discoveryFeedSignals: api.sampleSources.length,
+  feedViewsAfter6h: api.feedViewsAt(feedSource, 6 * 60),
+  feedDiscoverersAfter6h: api.sourceDiscovererCountAt(feedSource, 6 * 60),
   sleeperGrowth12h: Number(ratioAfter.toFixed(2)),
   discoveryRank: position.discoveryRank,
   discoverersAfter12h: api.discovererCountAt(position, 12 * 60),

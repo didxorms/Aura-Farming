@@ -21,7 +21,7 @@
             <span></span><span></span><span></span><span></span>
           </span>
           <div>
-            <p class="eyebrow">VIRAL FIELD / v0.2</p>
+            <p class="eyebrow">VIRAL FIELD / v0.3</p>
             <h1>떡상농장</h1>
           </div>
         </div>
@@ -33,6 +33,55 @@
         </button>
       </header>
 
+      <section class="page-view discovery-view" id="discoverView" data-view-panel="discover" aria-labelledby="discoverTitle" hidden>
+        <div class="discovery-masthead">
+          <div>
+            <p class="eyebrow">DISCOVERY FEED / LIVE</p>
+            <h2 id="discoverTitle">인터넷 밭을<br />먼저 훑어봐</h2>
+            <p>숫자는 보이지만 결말은 안 보여. 촉이 오는 신호를 남들보다 먼저 심어.</p>
+          </div>
+          <div class="radar-stamp" aria-hidden="true">
+            <span></span>
+            <strong>12</strong>
+            <small>SIGNALS</small>
+          </div>
+        </div>
+
+        <section class="scout-wire" aria-labelledby="scoutWireTitle">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">SCOUT WIRE</p>
+              <h3 id="scoutWireTitle">방금 들어온 소식</h3>
+            </div>
+            <span class="live-pill"><span></span> LIVE</span>
+          </div>
+          <ol class="scout-wire-list" id="scoutWireList"></ol>
+        </section>
+
+        <div class="feed-toolbar">
+          <div class="feed-filters" role="group" aria-label="발견 피드 정렬">
+            <button class="feed-filter is-active" type="button" data-feed-filter="signal">신호순</button>
+            <button class="feed-filter" type="button" data-feed-filter="new">최신</button>
+            <button class="feed-filter" type="button" data-feed-filter="early">저발견</button>
+          </div>
+          <button class="feed-direct-button" id="directLinkButton" type="button">링크 직접 심기 ↗</button>
+        </div>
+        <p class="feed-simulation-note"><span></span> PROTOTYPE DATA · 현재 피드와 경쟁자는 실제 SNS가 아닌 가상 시뮬레이션입니다.</p>
+
+        <div class="discovery-feed" id="discoveryFeed" aria-live="polite"></div>
+      </section>
+
+      <section class="page-view journal-view" id="historyView" data-view-panel="history" aria-labelledby="journalTitle" hidden>
+        <div class="journal-masthead">
+          <p class="eyebrow">DISCOVERY ARCHIVE</p>
+          <h2 id="journalTitle">내가 먼저 본<br />인터넷의 역사</h2>
+          <p>수익보다 중요한 건 발견 당시의 숫자야. 수확한 모든 신호가 증거로 남아.</p>
+        </div>
+        <div class="journal-summary" id="journalSummary"></div>
+        <div class="journal-grid" id="journalGrid"></div>
+      </section>
+
+      <div class="page-view field-view" id="fieldView" data-view-panel="field">
       <section class="hero-panel" aria-labelledby="portfolioTitle">
         <div class="hero-copy">
           <p class="eyebrow">MY FIELD VALUE</p>
@@ -145,10 +194,11 @@
           <strong id="rankValue">#—</strong>
         </div>
       </section>
+      </div>
 
       <footer class="build-footer">
         <span>LOCAL PROTOTYPE</span>
-        <button id="changelogButton" type="button">BUILD 0.2.0 · 변경 기록</button>
+        <button id="changelogButton" type="button">BUILD 0.3.0 · 변경 기록</button>
       </footer>
     </main>
 
@@ -166,7 +216,7 @@
       </button>
       <button class="nav-item" type="button" data-nav="history">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.34-5.66L4 8.68M4 4v4.68h4.68M12 8v5l3 2" /></svg>
-        <span>수확기록</span>
+        <span>발견도감</span>
       </button>
       <button class="nav-item" type="button" data-nav="lab">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.73 3h10.54A2 2 0 0 0 19 18l-5-9V3M8 15h8" /></svg>
@@ -207,6 +257,22 @@
       <h2 id="changelogTitle">변경 기록</h2>
       <div class="changelog-list">
         <article class="changelog-entry changelog-entry--current">
+          <div class="changelog-version">
+            <strong>v0.3</strong>
+            <time datetime="2026-07-23">2026.07.23</time>
+          </div>
+          <div>
+            <h3>SCOUT WIRE</h3>
+            <ul>
+              <li>12개 신호가 경쟁하는 발견 피드</li>
+              <li>신호순·최신·저발견 정렬과 지켜보기</li>
+              <li>시간에 따라 늘어나는 가상 발견자와 소식</li>
+              <li>피드에서 바로 분석하고 심는 흐름</li>
+              <li>수확 증거를 모아보는 발견 도감</li>
+            </ul>
+          </div>
+        </article>
+        <article class="changelog-entry">
           <div class="changelog-version">
             <strong>v0.2</strong>
             <time datetime="2026-07-23">2026.07.23</time>

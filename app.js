@@ -1,8 +1,8 @@
 "use strict";
 
-const APP_VERSION = "0.2.0";
-const STORAGE_KEY = "viral-field-prototype-v2";
-const LEGACY_STORAGE_KEY = "viral-field-prototype-v1";
+const APP_VERSION = "0.3.0";
+const STORAGE_KEY = "viral-field-prototype-v3";
+const LEGACY_STORAGE_KEYS = ["viral-field-prototype-v2", "viral-field-prototype-v1"];
 const MAX_SLOTS = 4;
 const SEED_COST = 1000;
 const AUTO_HARVEST_MINUTES = 24 * 60;
@@ -110,6 +110,72 @@ const sampleSources = [
     paletteIndex: 5,
     baseDiscoverers: 19,
   },
+  {
+    url: "https://www.instagram.com/reel/demo-capybara-007",
+    title: "카피바라가 온천에서 협상하는 방법",
+    handle: "@tiny_signal",
+    platform: "INSTAGRAM REELS",
+    initialViews: 416,
+    ageHours: 1,
+    curve: "comeback",
+    paletteIndex: 1,
+    baseDiscoverers: 1,
+  },
+  {
+    url: "https://www.tiktok.com/@scroll_damage/video/demo-toast-008",
+    title: "토스트가 튀자 고양이가 내린 결정",
+    handle: "@scroll_damage",
+    platform: "TIKTOK",
+    initialViews: 5900,
+    ageHours: 4,
+    curve: "breakout",
+    paletteIndex: 4,
+    baseDiscoverers: 13,
+  },
+  {
+    url: "https://www.instagram.com/reel/demo-grandma-009",
+    title: "할머니가 무인 계산대와 화해한 순간",
+    handle: "@hidden_clip",
+    platform: "INSTAGRAM REELS",
+    initialViews: 91,
+    ageHours: 1,
+    curve: "sleeper",
+    paletteIndex: 3,
+    baseDiscoverers: 0,
+  },
+  {
+    url: "https://youtube.com/shorts/demo-bus-010",
+    title: "버스 기사님의 박자감이 너무 정확함",
+    handle: "@after_3am",
+    platform: "YOUTUBE SHORTS",
+    initialViews: 22100,
+    ageHours: 13,
+    curve: "steady",
+    paletteIndex: 0,
+    baseDiscoverers: 64,
+  },
+  {
+    url: "https://www.tiktok.com/@oddly_locked/video/demo-duck-011",
+    title: "오리가 편의점 자동문을 악용하기 시작함",
+    handle: "@oddly_locked",
+    platform: "TIKTOK",
+    initialViews: 1180,
+    ageHours: 3,
+    curve: "earlySpike",
+    paletteIndex: 2,
+    baseDiscoverers: 5,
+  },
+  {
+    url: "https://www.instagram.com/reel/demo-printer-012",
+    title: "프린터와 8분째 기싸움 중인 신입",
+    handle: "@lowbattery99",
+    platform: "INSTAGRAM REELS",
+    initialViews: 760,
+    ageHours: 2,
+    curve: "flop",
+    paletteIndex: 5,
+    baseDiscoverers: 2,
+  },
 ];
 
 const elements = {
@@ -141,6 +207,14 @@ const elements = {
   resultContent: document.querySelector("#resultContent"),
   changelogButton: document.querySelector("#changelogButton"),
   changelogSheet: document.querySelector("#changelogSheet"),
+  fieldView: document.querySelector("#fieldView"),
+  discoverView: document.querySelector("#discoverView"),
+  historyView: document.querySelector("#historyView"),
+  discoveryFeed: document.querySelector("#discoveryFeed"),
+  scoutWireList: document.querySelector("#scoutWireList"),
+  journalSummary: document.querySelector("#journalSummary"),
+  journalGrid: document.querySelector("#journalGrid"),
+  directLinkButton: document.querySelector("#directLinkButton"),
   toast: document.querySelector("#toast"),
 };
 
@@ -149,6 +223,7 @@ let pendingCandidate = null;
 let selectedReplacementId = null;
 let sampleIndex = 2;
 let toastTimer = null;
+let activeFeedFilter = "signal";
 
 function buildInitialState() {
   const initial = {
@@ -158,6 +233,14 @@ function buildInitialState() {
     positions: [],
     harvests: [],
     harvestedSourceIds: [],
+    watchlist: [canonicalSourceId(sampleSources[2].url)],
+    notifications: [{
+      id: "welcome-wire",
+      icon: "◎",
+      text: "새 신호 12개가 발견 피드에 포착됐습니다.",
+      minute: 0,
+    }],
+    currentView: "field",
   };
 
   initial.positions.push(createPosition(sampleSources[0], -150));
@@ -167,7 +250,9 @@ function buildInitialState() {
 
 function loadState() {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
+    const saved = [STORAGE_KEY, ...LEGACY_STORAGE_KEYS]
+      .map((key) => localStorage.getItem(key))
+      .find(Boolean);
     if (!saved) return buildInitialState();
     const parsed = JSON.parse(saved);
     if (!parsed || !Array.isArray(parsed.positions) || !Array.isArray(parsed.harvests)) {
@@ -191,6 +276,7 @@ function migrateState(savedState) {
       ...position,
       discoveryRank: position.discoveryRank || discoveryRankFor(position),
       discoverersAtPlant: position.discoverersAtPlant || discoveryRankFor(position),
+      curveOffsetHours: position.curveOffsetHours || 0,
     })),
     harvests: savedState.harvests.map((harvest) => {
       const discoveryRank = harvest.discoveryRank || 1 + (hashString(harvest.sourceId || harvest.url || harvest.title) % 120);
@@ -206,10 +292,15 @@ function migrateState(savedState) {
       ...(savedState.harvestedSourceIds || []),
       ...savedState.harvests.map((harvest) => harvest.sourceId).filter(Boolean),
     ])),
+    watchlist: Array.from(new Set(savedState.watchlist || [])),
+    notifications: Array.isArray(savedState.notifications) ? savedState.notifications.slice(-12) : [],
+    currentView: ["field", "discover", "history"].includes(savedState.currentView)
+      ? savedState.currentView
+      : "field",
   };
 
   try {
-    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
   } catch {
     // Migration still succeeds when legacy cleanup is unavailable.
   }
@@ -237,6 +328,7 @@ function createPosition(source, plantedMinute = state.virtualMinutes) {
     entryViews: source.initialViews,
     ageHours: source.ageHours,
     curve: source.curve,
+    curveOffsetHours: source.curveOffsetHours || 0,
     paletteIndex: source.paletteIndex,
     plantedMinute,
     earlyBonus: calculateEarlyBonus(source.initialViews, source.ageHours),
@@ -292,7 +384,7 @@ function sourceFromUrl(rawUrl) {
   }
 
   const sample = sampleSources.find((item) => canonicalSourceId(item.url) === canonicalSourceId(normalized));
-  if (sample) return { ...sample, url: normalized };
+  if (sample) return sourceSnapshotAt({ ...sample, url: normalized });
 
   const seed = hashString(normalized);
   const curves = ["breakout", "steady", "earlySpike", "sleeper", "flop", "comeback"];
@@ -354,6 +446,58 @@ function discoveryPercentile(rank, total) {
   return clamp(Math.ceil((rank / total) * 100), 1, 100);
 }
 
+function feedViewsAt(source, virtualMinute = state.virtualMinutes) {
+  const elapsedHours = Math.max(0, virtualMinute / 60);
+  return Math.max(source.initialViews, Math.round(source.initialViews * growthFactor(source.curve, elapsedHours)));
+}
+
+function sourceDiscovererCountAt(source, virtualMinute = state.virtualMinutes) {
+  const elapsedHours = Math.max(0, virtualMinute / 60);
+  const ratio = feedViewsAt(source, virtualMinute) / source.initialViews;
+  const seed = hashString(source.url);
+  const viralFollowers = Math.floor(Math.max(0, ratio - 1) * (5 + (seed % 11)));
+  const backgroundFollowers = Math.floor(elapsedHours * (0.28 + (seed % 6) * 0.09));
+  return baseDiscovererCount(source) + viralFollowers + backgroundFollowers;
+}
+
+function sourceSnapshotAt(source, virtualMinute = state.virtualMinutes) {
+  return {
+    ...source,
+    initialViews: feedViewsAt(source, virtualMinute),
+    ageHours: Math.max(1, Math.round(source.ageHours + virtualMinute / 60)),
+    baseDiscoverers: sourceDiscovererCountAt(source, virtualMinute),
+    feedSourceId: canonicalSourceId(source.url),
+    curveOffsetHours: Math.max(0, virtualMinute / 60),
+  };
+}
+
+function feedMomentum(source, virtualMinute = state.virtualMinutes) {
+  const elapsedHours = Math.max(0, virtualMinute / 60);
+  const now = growthFactor(source.curve, elapsedHours);
+  const next = growthFactor(source.curve, elapsedHours + 1);
+  return Math.max(0, next / Math.max(now, 1) - 1);
+}
+
+function signalReading(source) {
+  const momentum = feedMomentum(source);
+  if (momentum >= 0.65) return { label: "과열 직전", tone: "hot", icon: "✹" };
+  if (momentum >= 0.24) return { label: "빠른 점화", tone: "warm", icon: "↗" };
+  if (momentum >= 0.09) return { label: "온도 상승", tone: "mild", icon: "↑" };
+  if (momentum >= 0.035) return { label: "미세 진동", tone: "quiet", icon: "·" };
+  return { label: "아직 조용함", tone: "quiet", icon: "—" };
+}
+
+function feedSources() {
+  const sources = [...sampleSources];
+  if (activeFeedFilter === "new") {
+    return sources.sort((a, b) => a.ageHours - b.ageHours || feedMomentum(b) - feedMomentum(a));
+  }
+  if (activeFeedFilter === "early") {
+    return sources.sort((a, b) => sourceDiscovererCountAt(a) - sourceDiscovererCountAt(b));
+  }
+  return sources.sort((a, b) => feedMomentum(b) - feedMomentum(a));
+}
+
 function growthFactor(curve, hours) {
   const h = Math.max(0, hours);
   switch (curve) {
@@ -375,7 +519,8 @@ function growthFactor(curve, hours) {
 
 function viewsAt(position, virtualMinute = state.virtualMinutes) {
   const elapsedHours = Math.max(0, (virtualMinute - position.plantedMinute) / 60);
-  const factor = growthFactor(position.curve, elapsedHours);
+  const offset = position.curveOffsetHours || 0;
+  const factor = growthFactor(position.curve, offset + elapsedHours) / growthFactor(position.curve, offset);
   return Math.max(position.entryViews, Math.round(position.entryViews * factor));
 }
 
@@ -409,6 +554,9 @@ function render() {
   renderSummary();
   renderField();
   renderActivity();
+  renderDiscover();
+  renderJournal();
+  renderNavigation();
   saveState();
 }
 
@@ -595,6 +743,177 @@ function renderActivity() {
   `).join("");
 }
 
+function renderDiscover() {
+  const notifications = [...state.notifications].reverse().slice(0, 3);
+  elements.scoutWireList.innerHTML = notifications.length > 0
+    ? notifications.map((item) => `
+      <li>
+        <span aria-hidden="true">${escapeHtml(item.icon || "·")}</span>
+        <p>${escapeHtml(item.text)}</p>
+        <time>${formatWireTime(item.minute)}</time>
+      </li>
+    `).join("")
+    : `<li><span aria-hidden="true">·</span><p>아직 들어온 소식이 없습니다.</p><time>대기</time></li>`;
+
+  elements.discoveryFeed.innerHTML = feedSources().map((source, index) => {
+    const sourceId = canonicalSourceId(source.url);
+    const currentViews = feedViewsAt(source);
+    const discoverers = sourceDiscovererCountAt(source);
+    const prospectiveRank = discoverers + 1;
+    const signal = signalReading(source);
+    const colors = palette[source.paletteIndex % palette.length];
+    const active = state.positions.find((position) => position.sourceId === sourceId);
+    const harvested = state.harvestedSourceIds.includes(sourceId);
+    const watched = state.watchlist.includes(sourceId);
+    const age = Math.max(1, Math.round(source.ageHours + state.virtualMinutes / 60));
+    const disabledLabel = active ? `#${formatNumber(active.discoveryRank)}로 심은 중` : harvested ? "수확 완료" : "지금 심기";
+
+    return `
+      <article class="feed-card ${watched ? "is-watched" : ""}" style="--feed-color:${colors.color}">
+        <div class="feed-card-visual">
+          <span class="feed-index">${String(index + 1).padStart(2, "0")}</span>
+          <span class="cover-platform">${shortPlatform(source.platform)}</span>
+          <span class="feed-signal feed-signal--${signal.tone}">${signal.icon} ${signal.label}</span>
+          <span class="feed-orb" aria-hidden="true"></span>
+          <span class="feed-scanline" aria-hidden="true"></span>
+        </div>
+        <div class="feed-card-body">
+          <div class="feed-title-row">
+            <div>
+              <h3>${escapeHtml(source.title)}</h3>
+              <p>${escapeHtml(source.handle)} · ${age}시간 전</p>
+            </div>
+            <button
+              class="watch-button ${watched ? "is-active" : ""}"
+              type="button"
+              data-feed-watch="${escapeHtml(sourceId)}"
+              aria-label="${watched ? "지켜보기 해제" : "지켜보기"}"
+              aria-pressed="${watched}"
+            >${watched ? "●" : "○"}</button>
+          </div>
+          <div class="feed-metrics">
+            <div><span>현재 조회</span><strong>${formatCompact(currentViews)}</strong></div>
+            <div><span>발견자</span><strong>${formatCompact(discoverers)}명</strong></div>
+            <div><span>지금 진입</span><strong>#${formatNumber(prospectiveRank)}</strong></div>
+          </div>
+          <div class="feed-card-actions">
+            <span>${watched ? "WATCHING · 변화 알림 켜짐" : "결말은 아직 아무도 모름"}</span>
+            <button
+              class="feed-plant-button"
+              type="button"
+              data-feed-plant="${escapeHtml(sourceId)}"
+              ${active || harvested ? "disabled" : ""}
+            >${disabledLabel}</button>
+          </div>
+        </div>
+      </article>
+    `;
+  }).join("");
+
+  document.querySelectorAll("[data-feed-filter]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.feedFilter === activeFeedFilter);
+  });
+}
+
+function renderJournal() {
+  const harvests = [...state.harvests].reverse();
+  const bestRank = harvests.length > 0
+    ? Math.min(...harvests.map((harvest) => harvest.discoveryRank || 1))
+    : null;
+  const bestGrowth = harvests.length > 0
+    ? Math.max(...harvests.map((harvest) => harvest.ratio || 1))
+    : 1;
+
+  elements.journalSummary.innerHTML = `
+    <div><span>수확한 신호</span><strong>${formatNumber(harvests.length)}</strong></div>
+    <div><span>최고 발견</span><strong>${bestRank ? `#${formatNumber(bestRank)}` : "#—"}</strong></div>
+    <div><span>최고 성장</span><strong>${bestGrowth > 1 ? `×${bestGrowth.toFixed(1)}` : "×—"}</strong></div>
+  `;
+
+  if (harvests.length === 0) {
+    elements.journalGrid.innerHTML = `
+      <div class="journal-empty">
+        <span aria-hidden="true">◎</span>
+        <h3>아직 인터넷 역사에 이름이 없어</h3>
+        <p>신호를 심고 수확하면 발견 당시의 숫자가 여기에 영구 기록됩니다.</p>
+        <button class="primary-button" type="button" data-journal-discover>첫 신호 찾기</button>
+      </div>
+    `;
+    return;
+  }
+
+  elements.journalGrid.innerHTML = harvests.map((harvest, index) => {
+    const colors = palette[harvest.paletteIndex % palette.length];
+    const percentile = discoveryPercentile(harvest.discoveryRank, harvest.discoverersAtHarvest);
+    const grade = resultGrade(harvest.ratio);
+    return `
+      <article class="journal-card" style="--journal-color:${colors.color}">
+        <div class="journal-card-mark">
+          <span>${grade.grade}</span>
+          <small>ARCHIVE ${String(harvests.length - index).padStart(3, "0")}</small>
+        </div>
+        <div class="journal-card-copy">
+          <p>${shortPlatform(harvest.platform)} · ${escapeHtml(harvest.handle)}</p>
+          <h3>${escapeHtml(harvest.title)}</h3>
+          <div class="journal-proof">
+            <strong>${harvest.discoveryRank === 1 ? "최초 발견" : `#${formatNumber(harvest.discoveryRank)} 발견`}</strong>
+            <span>${formatCompact(harvest.entryViews)}뷰 진입 · 상위 ${percentile}%</span>
+          </div>
+          <div class="journal-card-stats">
+            <span>성장 ×${harvest.ratio.toFixed(1)}</span>
+            <span>뒤따른 발견자 +${formatCompact(Math.max(0, harvest.discoverersAtHarvest - harvest.discoveryRank))}</span>
+          </div>
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+function renderNavigation() {
+  const currentView = ["field", "discover", "history"].includes(state.currentView)
+    ? state.currentView
+    : "field";
+  elements.fieldView.hidden = currentView !== "field";
+  elements.discoverView.hidden = currentView !== "discover";
+  elements.historyView.hidden = currentView !== "history";
+  document.querySelectorAll("[data-nav]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.nav === currentView);
+  });
+}
+
+function showView(view, shouldScroll = true) {
+  if (!["field", "discover", "history"].includes(view)) return;
+  state.currentView = view;
+  renderNavigation();
+  saveState();
+  if (shouldScroll) window.scrollTo?.({ top: 0, behavior: "smooth" });
+}
+
+function openFeedCandidate(sourceId) {
+  const source = sampleSources.find((item) => canonicalSourceId(item.url) === sourceId);
+  if (!source) return;
+  openCandidate(sourceSnapshotAt(source));
+}
+
+function toggleWatch(sourceId) {
+  if (state.watchlist.includes(sourceId)) {
+    state.watchlist = state.watchlist.filter((item) => item !== sourceId);
+    showToast("지켜보기를 해제했습니다.");
+  } else {
+    state.watchlist.push(sourceId);
+    const source = sampleSources.find((item) => canonicalSourceId(item.url) === sourceId);
+    showToast(`“${shortTitle(source?.title || "이 신호")}” 변화를 지켜봅니다.`);
+  }
+  render();
+}
+
+function formatWireTime(minute) {
+  const elapsed = Math.max(0, state.virtualMinutes - (minute || 0));
+  if (elapsed < 10) return "방금";
+  if (elapsed < 60) return `${Math.round(elapsed)}분 전`;
+  return `${Math.floor(elapsed / 60)}시간 전`;
+}
+
 function openCandidate(source) {
   const sourceId = canonicalSourceId(source.url);
   const duplicate = state.positions.find((position) => position.sourceId === sourceId);
@@ -695,8 +1014,13 @@ function plantPendingCandidate() {
   }
 
   state.balance -= SEED_COST;
-  state.positions.push(createPosition(pendingCandidate));
+  const plantedPosition = createPosition(pendingCandidate);
+  state.positions.push(plantedPosition);
   const plantedTitle = pendingCandidate.title;
+  pushScoutNotification(
+    `당신이 “${shortTitle(plantedTitle)}”의 ${formatNumber(plantedPosition.discoveryRank)}번째 발견자가 됐습니다.`,
+    plantedPosition.discoveryRank === 1 ? "★" : "↗",
+  );
   pendingCandidate = null;
   selectedReplacementId = null;
   closeSheets();
@@ -842,7 +1166,7 @@ async function shareResult(resultId) {
   if (!result) return;
   const percentile = discoveryPercentile(result.discoveryRank, result.discoverersAtHarvest);
   const discoveryText = result.discoveryRank === 1 ? "최초 발견자" : `${formatNumber(result.discoveryRank)}번째 발견 · 상위 ${percentile}%`;
-  const text = `나는 “${result.title}”을 ${formatCompact(result.entryViews)}뷰에서 발견했다. ${discoveryText} · 현재 ${formatCompact(result.currentViews)}뷰 · 떡상농장 v0.2`;
+  const text = `나는 “${result.title}”을 ${formatCompact(result.entryViews)}뷰에서 발견했다. ${discoveryText} · 현재 ${formatCompact(result.currentViews)}뷰 · 떡상농장 v0.3`;
 
   try {
     if (navigator.share) {
@@ -859,16 +1183,52 @@ async function shareResult(resultId) {
   }
 }
 
-function advanceTime(minutes) {
-  if (state.positions.length === 0) {
-    state.virtualMinutes += minutes;
-    render();
-    showToast("시간은 흘렀지만 아직 심어둔 링크가 없어요.");
-    return;
+function pushScoutNotification(text, icon = "·") {
+  state.notifications.push({
+    id: createId(),
+    icon,
+    text,
+    minute: state.virtualMinutes,
+  });
+  state.notifications = state.notifications.slice(-12);
+}
+
+function generateScoutUpdates(previousMinute) {
+  const positionMoves = state.positions.map((position) => {
+    const before = discovererCountAt(position, previousMinute);
+    const after = discovererCountAt(position, state.virtualMinutes);
+    return { position, gained: Math.max(0, after - before) };
+  }).sort((a, b) => b.gained - a.gained);
+
+  if (positionMoves[0]?.gained > 0) {
+    const { position, gained } = positionMoves[0];
+    pushScoutNotification(
+      `“${shortTitle(position.title)}”에 당신 뒤로 새 발견자 ${formatCompact(gained)}명이 들어왔습니다.`,
+      "↗",
+    );
   }
 
+  const watchedMoves = state.watchlist.map((sourceId) => {
+    const source = sampleSources.find((item) => canonicalSourceId(item.url) === sourceId);
+    if (!source) return null;
+    const beforeViews = feedViewsAt(source, previousMinute);
+    const afterViews = feedViewsAt(source, state.virtualMinutes);
+    return { source, ratio: afterViews / Math.max(beforeViews, 1) };
+  }).filter(Boolean).sort((a, b) => b.ratio - a.ratio);
+
+  if (watchedMoves[0] && watchedMoves[0].ratio >= 1.04) {
+    pushScoutNotification(
+      `지켜보던 “${shortTitle(watchedMoves[0].source.title)}” 신호가 ${watchedMoves[0].ratio.toFixed(1)}배 움직였습니다.`,
+      "◎",
+    );
+  }
+}
+
+function advanceTime(minutes) {
+  const previousMinute = state.virtualMinutes;
   const before = new Map(state.positions.map((position) => [position.id, positionRatio(position)]));
   state.virtualMinutes += minutes;
+  generateScoutUpdates(previousMinute);
   const expired = state.positions.filter((position) => elapsedMinutes(position) >= AUTO_HARVEST_MINUTES);
   const results = expired.map((position) => harvestPosition(position.id, false)).filter(Boolean);
   render();
@@ -879,6 +1239,11 @@ function advanceTime(minutes) {
   }
   if (results.length > 1) {
     showToast(`${results.length}개 포지션이 24시간을 채워 자동 수확됐습니다.`);
+    return;
+  }
+
+  if (state.positions.length === 0) {
+    showToast(`+${minutes / 60}시간 · 발견 피드의 신호와 경쟁자 수가 갱신됐습니다.`);
     return;
   }
 
@@ -921,6 +1286,7 @@ function showToast(message) {
 
 function scrollToPlant() {
   closeSheets();
+  showView("field", false);
   document.querySelector(".plant-panel")?.scrollIntoView({ behavior: "smooth", block: "center" });
   window.setTimeout(() => elements.linkInput.focus(), 350);
 }
@@ -1001,7 +1367,7 @@ elements.sampleButton.addEventListener("click", () => {
   const source = sampleSources[sampleIndex % sampleSources.length];
   sampleIndex += 1;
   elements.linkInput.value = source.url;
-  openCandidate(source);
+  openCandidate(sourceSnapshotAt(source));
 });
 
 elements.pasteButton.addEventListener("click", async () => {
@@ -1020,6 +1386,28 @@ elements.advanceOneButton.addEventListener("click", () => advanceTime(60));
 elements.advanceSixButton.addEventListener("click", () => advanceTime(360));
 elements.navPlantButton.addEventListener("click", scrollToPlant);
 elements.changelogButton.addEventListener("click", () => openSheet(elements.changelogSheet));
+elements.directLinkButton.addEventListener("click", scrollToPlant);
+
+elements.discoveryFeed.addEventListener("click", (event) => {
+  const watch = event.target.closest("[data-feed-watch]");
+  if (watch) {
+    toggleWatch(watch.dataset.feedWatch);
+    return;
+  }
+  const plant = event.target.closest("[data-feed-plant]");
+  if (plant && !plant.disabled) openFeedCandidate(plant.dataset.feedPlant);
+});
+
+document.querySelectorAll("[data-feed-filter]").forEach((button) => {
+  button.addEventListener("click", () => {
+    activeFeedFilter = button.dataset.feedFilter;
+    renderDiscover();
+  });
+});
+
+elements.journalGrid.addEventListener("click", (event) => {
+  if (event.target.closest("[data-journal-discover]")) showView("discover");
+});
 
 elements.fieldGrid.addEventListener("click", (event) => {
   const positionCard = event.target.closest("[data-position-id]");
@@ -1061,9 +1449,12 @@ elements.resultContent.addEventListener("click", (event) => {
 document.addEventListener("click", (event) => {
   if (event.target.closest("[data-close-sheet]")) closeSheets();
   const nav = event.target.closest("[data-nav]");
-  if (nav && nav.dataset.nav !== "field") {
-    showToast("이번 프로토타입에서는 ‘내 밭’ 핵심 루프만 열어뒀어요.");
+  if (!nav) return;
+  if (nav.dataset.nav === "lab") {
+    showToast("실험실은 다음 빌드에서 열립니다. 지금은 발견 감각부터 검증해 봐요.");
+    return;
   }
+  showView(nav.dataset.nav);
 });
 
 elements.modalBackdrop.addEventListener("click", () => closeSheets());
