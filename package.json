@@ -1,6 +1,6 @@
 {
   "name": "viral-farm-prototype",
-  "version": "0.7.2",
+  "version": "0.8.0",
   "private": true,
   "description": "실제 YouTube 신호를 먼저 발견해 심고 수확하는 서버 기반 게임 프로토타입",
   "engines": {
@@ -10,6 +10,6 @@
     "start": "node --env-file-if-exists=.env --use-system-ca server.js",
     "collect": "node --env-file-if-exists=.env --use-system-ca worker.js",
     "worker": "node --env-file-if-exists=.env --use-system-ca worker.js --watch",
-    "check": "node --check app.js && node --check api-client.js && node --check server.js && node --check worker.js && node tests/test-youtube.cjs && node tests/test-logic.cjs && node tests/test-v07.cjs && node tests/test-api-v07.cjs"
+    "check": "node --check app.js && node --check api-client.js && node --check server.js && node --check worker.js && node --check lib/discovery-engine.js && node tests/test-youtube.cjs && node tests/test-logic.cjs && node tests/test-v07.cjs && node tests/test-discovery-v08.cjs && node tests/test-api-v07.cjs"
   }
 }

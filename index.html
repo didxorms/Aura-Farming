@@ -22,7 +22,7 @@
             <span></span><span></span><span></span><span></span>
           </span>
           <div>
-          <p class="eyebrow">VIRAL FIELD / v0.7.2</p>
+          <p class="eyebrow">VIRAL FIELD / v0.8.0</p>
             <h1>떡상농장</h1>
           </div>
         </div>
@@ -41,12 +41,18 @@
             <h2 id="discoverTitle">인터넷 밭을<br />먼저 훑어봐</h2>
             <p>숫자는 보이지만 결말은 안 보여. 촉이 오는 신호를 남들보다 먼저 심어.</p>
           </div>
-          <div class="radar-stamp" aria-hidden="true">
+          <div class="radar-stamp">
             <span></span>
-            <strong>12</strong>
+            <strong id="liveSignalCount">0</strong>
             <small>SIGNALS</small>
           </div>
         </div>
+
+        <section class="discovery-engine-strip" aria-label="발견 엔진 상태">
+          <div><span>ENGINE</span><strong id="discoveryEngineVersion">V0.8</strong></div>
+          <div><span>돌파·상승</span><strong id="risingSignalCount">0</strong></div>
+          <div><span>마지막 판정</span><strong id="feedEvaluatedAt">대기</strong></div>
+        </section>
 
         <section class="scout-desk" aria-labelledby="scoutDeskTitle">
           <div class="section-heading scout-desk-heading">
@@ -75,13 +81,17 @@
 
         <div class="feed-toolbar">
           <div class="feed-filters" role="group" aria-label="발견 피드 정렬">
-            <button class="feed-filter is-active" type="button" data-feed-filter="signal">신호순</button>
+            <button class="feed-filter is-active" type="button" data-feed-filter="signal">추천</button>
+            <button class="feed-filter" type="button" data-feed-filter="rising">급상승</button>
             <button class="feed-filter" type="button" data-feed-filter="new">최신</button>
-            <button class="feed-filter" type="button" data-feed-filter="early">저발견</button>
+            <button class="feed-filter" type="button" data-feed-filter="early">초기 기회</button>
           </div>
           <button class="feed-direct-button" id="directLinkButton" type="button">링크 직접 심기 ↗</button>
         </div>
-        <p class="feed-simulation-note" id="feedDataNote"><span></span> LIVE DISCOVERY · 서버가 수집한 실제 YouTube 통계를 표시합니다.</p>
+        <div class="feed-live-row">
+          <p class="feed-simulation-note" id="feedDataNote"><span></span> LIVE DISCOVERY · 서버가 수집한 실제 YouTube 통계를 표시합니다.</p>
+          <button class="feed-refresh-button" id="feedRefreshButton" type="button">↻ 새로고침</button>
+        </div>
 
         <div class="discovery-feed" id="discoveryFeed" aria-live="polite"></div>
       </section>
@@ -106,7 +116,7 @@
         <section class="lab-status-panel" aria-labelledby="labStatusTitle">
           <div class="section-heading">
             <div>
-              <p class="eyebrow">V0.7 SYSTEM STATUS</p>
+              <p class="eyebrow">V0.8 SYSTEM STATUS</p>
               <h3 id="labStatusTitle">라이브 연결 상태</h3>
             </div>
           </div>
@@ -254,7 +264,7 @@
 
       <footer class="build-footer">
         <span>SERVER BETA</span>
-        <button id="changelogButton" type="button">BUILD 0.7.2 · 변경 기록</button>
+        <button id="changelogButton" type="button">BUILD 0.8.0 · 변경 기록</button>
       </footer>
     </main>
 
@@ -313,6 +323,20 @@
       <h2 id="changelogTitle">변경 기록</h2>
       <div class="changelog-list">
         <article class="changelog-entry changelog-entry--current">
+          <div class="changelog-version">
+            <strong>v0.8.0</strong>
+            <time datetime="2026-07-24">2026.07.24</time>
+          </div>
+          <div>
+            <h3>DISCOVERY ENGINE & LIVE FEED</h3>
+            <ul>
+              <li>최대 12개 실제 스냅샷으로 성장·가속·반응·신뢰도를 함께 판정</li>
+              <li>채널·주제 쏠림을 줄인 추천·급상승·최신·초기 기회 피드</li>
+              <li>실제 썸네일과 시간당 유입·선정 이유가 보이는 라이브 카드</li>
+            </ul>
+          </div>
+        </article>
+        <article class="changelog-entry">
           <div class="changelog-version">
             <strong>v0.7.2</strong>
             <time datetime="2026-07-24">2026.07.24</time>

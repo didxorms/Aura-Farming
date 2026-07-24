@@ -21,6 +21,10 @@ const config = loadConfig({
 assert(config.host === "0.0.0.0" && config.port === 8080, "External host settings should be configurable");
 assert(config.publicApiBaseUrl === "https://api.example.com", "Public API base URL should be normalized");
 assert(config.allowedOrigins.length === 2, "Multiple external frontends should be allowed explicitly");
+assert(
+  config.searchLanes[0].label === "유머·밈" && config.searchLanes[0].query.includes("챌린지"),
+  "Discovery search lanes should expose separate labels and YouTube queries",
+);
 
 const store = createStore(config);
 const now = Date.parse("2026-07-24T00:00:00.000Z");
@@ -149,7 +153,7 @@ const correctedMeasurement = rawMeasurement({
   ],
 }, Date.parse("2026-07-24T00:30:00.000Z"));
 assert(
-  correctedMeasurement.relativeVelocity === 0 && correctedMeasurement.absoluteVelocity === 0,
+  correctedMeasurement.growthRatePerHour === 0 && correctedMeasurement.viewsPerHour === 0,
   "A view-count audit bounce must not be scored as fresh growth",
 );
 
