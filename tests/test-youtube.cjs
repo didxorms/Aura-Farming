@@ -59,7 +59,12 @@ async function verifyBatchStatistics() {
     const result = await fetchYoutubeStatistics([videoId]);
     assert(result.apiKeyConfigured, "A configured key should enable live statistics");
     assert(result.items[0].videoId === videoId && result.items[0].views === 125000, "Live view counts should be normalized to numbers");
-    assert(requestedUrl.includes("part=statistics") && requestedUrl.includes(videoId), "Batch request should ask only for video statistics");
+    assert(
+      requestedUrl.includes("/youtube/v3/videos?")
+        && requestedUrl.includes("statistics")
+        && requestedUrl.includes(videoId),
+      "Batch request should use videos.list with a comma-separated ID filter",
+    );
     batchViews = result.items[0].views;
   } finally {
     global.fetch = originalFetch;

@@ -1,12 +1,14 @@
 "use strict";
 
-const APP_VERSION = "0.6.0";
-const STORAGE_KEY = "viral-field-prototype-v6";
-const LEGACY_STORAGE_KEYS = ["viral-field-prototype-v5", "viral-field-prototype-v4", "viral-field-prototype-v3", "viral-field-prototype-v2", "viral-field-prototype-v1"];
+const APP_VERSION = "0.7.0";
+const STORAGE_KEY = "viral-field-prototype-v7-lab";
+const LEGACY_STORAGE_KEYS = ["viral-field-prototype-v6", "viral-field-prototype-v5", "viral-field-prototype-v4", "viral-field-prototype-v3", "viral-field-prototype-v2", "viral-field-prototype-v1"];
 const MAX_SLOTS = 4;
 const SEED_COST = 1000;
 const AUTO_HARVEST_MINUTES = 24 * 60;
+const REAL_CLOCK_TICK_MS = 30 * 1000;
 const YOUTUBE_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const SERVER_STATE_REFRESH_INTERVAL_MS = 60 * 1000;
 const MAX_VIEW_SNAPSHOTS = 48;
 
 const palette = [
@@ -215,6 +217,12 @@ const elements = {
   fieldView: document.querySelector("#fieldView"),
   discoverView: document.querySelector("#discoverView"),
   historyView: document.querySelector("#historyView"),
+  labView: document.querySelector("#labView"),
+  feedDataNote: document.querySelector("#feedDataNote"),
+  labConnectionStatus: document.querySelector("#labConnectionStatus"),
+  labStorageStatus: document.querySelector("#labStorageStatus"),
+  labCollectorStatus: document.querySelector("#labCollectorStatus"),
+  labSimulationGrid: document.querySelector("#labSimulationGrid"),
   scoutQueue: document.querySelector("#scoutQueue"),
   scoutQueueCount: document.querySelector("#scoutQueueCount"),
   discoveryFeed: document.querySelector("#discoveryFeed"),
@@ -232,6 +240,151 @@ let sampleIndex = 2;
 let toastTimer = null;
 let activeFeedFilter = "signal";
 let youtubeSyncInFlight = false;
+const serverApi = globalThis.ViralFieldApi || null;
+let serverConnected = false;
+let serverConnecting = false;
+let remoteFeedSources = [];
+let serverStatus = null;
+let serverBootstrapAt = null;
+let serverConnectionError = null;
+let serverRefreshInFlight = false;
+
+function ageHoursFromDate(value) {
+  const timestamp = Date.parse(value || "");
+  return Number.isFinite(timestamp)
+    ? Math.max(1, Math.round((Date.now() - timestamp) / 3600000))
+    : 1;
+}
+
+function paletteIndexFor(value) {
+  return hashString(String(value || "viral-field")) % palette.length;
+}
+
+function mapServerFeedItem(item) {
+  const videoId = item.youtubeId || item.videoId;
+  const sourceId = `yt:${videoId}`;
+  return {
+    ...item,
+    videoId,
+    sourceId,
+    url: item.url || canonicalYoutubeUrl(videoId),
+    handle: item.channelTitle || item.handle || "YouTube",
+    platform: "YOUTUBE SHORTS",
+    initialViews: Math.max(1, Number(item.views) || 1),
+    ageHours: ageHoursFromDate(item.publishedAt),
+    curve: "steady",
+    paletteIndex: paletteIndexFor(sourceId),
+    baseDiscoverers: Math.max(0, Number(item.discovererCount) || 0),
+    signalScore: Math.max(0, Number(item.signalScore) || 0),
+    momentum: Math.max(0, Number(item.signalScore) || 0) / 100,
+    liveFeed: true,
+    statsMode: item.statsMode || "youtube-api",
+  };
+}
+
+function mapServerPosition(position) {
+  const sourceId = position.sourceId || `yt:${position.videoId}`;
+  return {
+    ...position,
+    sourceId,
+    initialViews: position.entryViews,
+    discoverersAtPlant: position.discoveryRank,
+    serverDiscovererCount: position.discovererCount,
+    curve: "steady",
+    curveOffsetHours: 0,
+    paletteIndex: paletteIndexFor(sourceId),
+    seed: hashString(sourceId),
+    plantedMinute: 0,
+    elapsedOffsetMinutes: Math.max(0, Number(position.elapsedMinutes) || 0),
+  };
+}
+
+function mapServerWatch(item) {
+  const videoId = item.youtubeId || item.videoId;
+  const sourceId = `yt:${videoId}`;
+  return {
+    ...mapServerFeedItem({ ...item, videoId }),
+    sourceId,
+    addedMinute: state.virtualMinutes,
+    alertMode: item.alertMode || "all",
+    watchedAt: item.watchedAt,
+  };
+}
+
+function mapServerHarvest(harvest) {
+  const sourceId = harvest.sourceId || `yt:${harvest.videoId}`;
+  return {
+    ...harvest,
+    sourceId,
+    paletteIndex: paletteIndexFor(sourceId),
+    discoverersAtHarvest: Math.max(
+      Number(harvest.discoveryRank) || 1,
+      Number(harvest.discoverersAtHarvest) || 1,
+    ),
+  };
+}
+
+function applyServerBootstrap(payload) {
+  if (!payload?.player) return;
+  state.balance = Number(payload.player.balance) || 0;
+  state.positions = (payload.positions || []).map(mapServerPosition);
+  state.scoutQueue = (payload.watches || []).map(mapServerWatch);
+  state.watchlist = state.scoutQueue.map((entry) => entry.sourceId);
+  state.notifications = [];
+  state.harvests = (payload.harvests || []).map(mapServerHarvest);
+  state.harvestedSourceIds = Array.from(new Set(state.harvests.map((item) => item.sourceId)));
+  state.youtubeSync.apiKeyConfigured = serverStatus?.apiKeyConfigured ?? state.youtubeSync.apiKeyConfigured;
+  state.youtubeSync.lastSuccessAt = payload.serverTime || state.youtubeSync.lastSuccessAt;
+  serverBootstrapAt = payload.serverTime || new Date().toISOString();
+}
+
+async function refreshServerFeed(sort = activeFeedFilter) {
+  if (!serverApi) return;
+  const payload = await serverApi.feed(sort);
+  remoteFeedSources = (payload.items || []).map(mapServerFeedItem);
+}
+
+async function initializeServerMode() {
+  if (!serverApi || serverConnecting) return false;
+  serverConnecting = true;
+  serverConnectionError = null;
+  try {
+    await serverApi.ensureSession();
+    const [bootstrap, feed, status] = await Promise.all([
+      serverApi.bootstrap(),
+      serverApi.feed(activeFeedFilter),
+      serverApi.status(),
+    ]);
+    serverStatus = status;
+    serverConnected = true;
+    applyServerBootstrap(bootstrap);
+    remoteFeedSources = (feed.items || []).map(mapServerFeedItem);
+    render();
+    return true;
+  } catch (error) {
+    serverConnected = false;
+    serverConnectionError = error;
+    render();
+    return false;
+  } finally {
+    serverConnecting = false;
+  }
+}
+
+async function refreshServerState({ includeFeed = true } = {}) {
+  if (!serverConnected || !serverApi || serverRefreshInFlight) return;
+  serverRefreshInFlight = true;
+  try {
+    const requests = [serverApi.bootstrap(), serverApi.status()];
+    if (includeFeed) requests.push(serverApi.feed(activeFeedFilter));
+    const [bootstrap, status, feed] = await Promise.all(requests);
+    serverStatus = status;
+    applyServerBootstrap(bootstrap);
+    if (feed) remoteFeedSources = (feed.items || []).map(mapServerFeedItem);
+  } finally {
+    serverRefreshInFlight = false;
+  }
+}
 
 function buildInitialState() {
   const initialScout = createScoutEntry(sampleSources[2], 0);
@@ -239,6 +392,7 @@ function buildInitialState() {
     version: APP_VERSION,
     balance: 3200,
     virtualMinutes: 0,
+    clockUpdatedAt: new Date().toISOString(),
     positions: [],
     harvests: [],
     harvestedSourceIds: [],
@@ -279,7 +433,11 @@ function loadState() {
   }
 }
 
-function migrateState(savedState) {
+function migrateState(savedState, now = Date.now()) {
+  const migrationNow = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+  const savedVirtualMinutes = Number.isFinite(Number(savedState.virtualMinutes))
+    ? Number(savedState.virtualMinutes)
+    : 0;
   const legacyRefund = savedState.harvests.reduce((sum, harvest) => {
     return sum + Math.max(0, SEED_COST - (harvest.payout || 0));
   }, 0);
@@ -297,16 +455,26 @@ function migrateState(savedState) {
     }))
     .map((entry) => normalizeScoutEntry(entry))
     .filter((entry) => entry && !lockedSourceIds.has(entry.sourceId));
-  const migrated = {
-    ...savedState,
-    version: APP_VERSION,
-    balance: (savedState.balance || 0) + legacyRefund,
-    positions: savedState.positions.map((position) => ({
+  const positions = savedState.positions.map((position) => {
+    const viewSnapshots = normalizeViewSnapshots(position);
+    const plantedAt = inferPositionPlantedAt(position, viewSnapshots, migrationNow);
+    const virtualElapsed = Math.max(0, savedVirtualMinutes - (Number(position.plantedMinute) || 0));
+    const plantedTimestamp = Date.parse(plantedAt || "");
+    const wallElapsed = Number.isFinite(plantedTimestamp)
+      ? Math.max(0, (migrationNow - plantedTimestamp) / 60000)
+      : 0;
+    const elapsedOffsetMinutes = Number.isFinite(Number(position.elapsedOffsetMinutes))
+      ? Math.max(0, Number(position.elapsedOffsetMinutes))
+      : Math.max(0, wallElapsed - virtualElapsed);
+
+    return {
       ...position,
       discoveryRank: position.discoveryRank || discoveryRankFor(position),
       discoverersAtPlant: position.discoverersAtPlant || discoveryRankFor(position),
       curveOffsetHours: position.curveOffsetHours || 0,
       thumbnailUrl: position.thumbnailUrl || youtubeThumbnailForUrl(position.url),
+      plantedAt,
+      elapsedOffsetMinutes,
       actualEntryViews: Number.isFinite(position.actualEntryViews)
         ? position.actualEntryViews
         : position.statsMode === "youtube-api" ? position.entryViews : null,
@@ -314,8 +482,20 @@ function migrateState(savedState) {
         ? position.liveViews
         : position.statsMode === "youtube-api" ? position.entryViews : null,
       lastSyncedAt: position.lastSyncedAt || position.syncedAt || null,
-      viewSnapshots: normalizeViewSnapshots(position),
-    })),
+      viewSnapshots,
+    };
+  });
+  const savedClockTimestamp = Date.parse(savedState.clockUpdatedAt || "");
+  const clockUpdatedAt = Number.isFinite(savedClockTimestamp) && savedClockTimestamp <= migrationNow
+    ? new Date(savedClockTimestamp).toISOString()
+    : new Date(migrationNow).toISOString();
+  const migrated = {
+    ...savedState,
+    version: APP_VERSION,
+    balance: (savedState.balance || 0) + legacyRefund,
+    virtualMinutes: savedVirtualMinutes,
+    clockUpdatedAt,
+    positions,
     harvests: savedState.harvests.map((harvest) => {
       const discoveryRank = harvest.discoveryRank || 1 + (hashString(harvest.sourceId || harvest.url || harvest.title) % 120);
       return {
@@ -338,7 +518,7 @@ function migrateState(savedState) {
       lastSuccessAt: savedState.youtubeSync?.lastSuccessAt || null,
     },
     notifications: Array.isArray(savedState.notifications) ? savedState.notifications.slice(-12) : [],
-    currentView: ["field", "discover", "history"].includes(savedState.currentView)
+    currentView: ["field", "discover", "history", "lab"].includes(savedState.currentView)
       ? savedState.currentView
       : "field",
   };
@@ -353,6 +533,18 @@ function migrateState(savedState) {
 
 function saveState() {
   try {
+    if (serverConnected) {
+      const savedLabState = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+      const labState = savedLabState && Array.isArray(savedLabState.positions)
+        ? savedLabState
+        : buildInitialState();
+      labState.version = APP_VERSION;
+      labState.virtualMinutes = state.virtualMinutes;
+      labState.clockUpdatedAt = state.clockUpdatedAt;
+      labState.currentView = state.currentView;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(labState));
+      return;
+    }
     state.watchlist = state.scoutQueue.map((entry) => entry.sourceId);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
@@ -402,6 +594,7 @@ function createPosition(source, plantedMinute = state.virtualMinutes) {
   const discoveryRank = discoveryRankFor(source);
   const tracksActualViews = source.statsMode === "youtube-api" && Number.isFinite(source.initialViews);
   const syncedAt = tracksActualViews ? (source.syncedAt || new Date().toISOString()) : null;
+  const plantedAt = new Date().toISOString();
   return {
     id: createId(),
     sourceId: canonicalSourceId(source.url),
@@ -421,6 +614,8 @@ function createPosition(source, plantedMinute = state.virtualMinutes) {
     curveOffsetHours: source.curveOffsetHours || 0,
     paletteIndex: source.paletteIndex,
     plantedMinute,
+    plantedAt,
+    elapsedOffsetMinutes: 0,
     earlyBonus: calculateEarlyBonus(source.initialViews, source.ageHours),
     seed: hashString(source.url),
     discoveryRank,
@@ -448,6 +643,17 @@ function normalizeViewSnapshots(position) {
     at: position.lastSyncedAt || position.syncedAt || new Date().toISOString(),
     views,
   }];
+}
+
+function inferPositionPlantedAt(position, snapshots = [], now = Date.now()) {
+  const candidates = [position.plantedAt, snapshots[0]?.at];
+  for (const candidate of candidates) {
+    const timestamp = Date.parse(candidate || "");
+    if (Number.isFinite(timestamp) && timestamp <= now) {
+      return new Date(timestamp).toISOString();
+    }
+  }
+  return null;
 }
 
 function createId() {
@@ -549,6 +755,20 @@ function sourceFromUrl(rawUrl) {
 }
 
 async function sourceFromYoutube(rawUrl) {
+  if (serverConnected && serverApi) {
+    const metadata = await serverApi.resolveVideo(rawUrl);
+    return {
+      ...mapServerFeedItem({
+        ...metadata,
+        youtubeId: metadata.videoId,
+        views: metadata.initialViews,
+        discovererCount: 0,
+      }),
+      metadataMode: metadata.metadataMode,
+      statsMode: metadata.statsMode,
+      syncedAt: metadata.syncedAt,
+    };
+  }
   const validatedSource = sourceFromUrl(rawUrl);
   const videoId = youtubeVideoId(rawUrl);
   if (!videoId) return validatedSource;
@@ -619,7 +839,10 @@ function discoveryRankFor(source) {
 }
 
 function discovererCountAt(position, virtualMinute = state.virtualMinutes) {
-  const elapsedHours = Math.max(0, (virtualMinute - position.plantedMinute) / 60);
+  if (serverConnected && Number.isFinite(Number(position.serverDiscovererCount))) {
+    return Math.max(position.discoveryRank || 1, Number(position.serverDiscovererCount));
+  }
+  const elapsedHours = elapsedMinutesAt(position, virtualMinute) / 60;
   const ratio = positionRatio(position, virtualMinute);
   const seedRate = 7 + (position.seed % 13);
   const viralFollowers = Math.floor(Math.max(0, ratio - 1) * seedRate);
@@ -633,11 +856,13 @@ function discoveryPercentile(rank, total) {
 }
 
 function feedViewsAt(source, virtualMinute = state.virtualMinutes) {
+  if (source.liveFeed) return Math.max(0, Number(source.initialViews) || 0);
   const elapsedHours = Math.max(0, virtualMinute / 60);
   return Math.max(source.initialViews, Math.round(source.initialViews * growthFactor(source.curve, elapsedHours)));
 }
 
 function sourceDiscovererCountAt(source, virtualMinute = state.virtualMinutes) {
+  if (source.liveFeed) return Math.max(0, Number(source.baseDiscoverers) || 0);
   const elapsedHours = Math.max(0, virtualMinute / 60);
   const ratio = feedViewsAt(source, virtualMinute) / source.initialViews;
   const seed = hashString(source.url);
@@ -647,6 +872,13 @@ function sourceDiscovererCountAt(source, virtualMinute = state.virtualMinutes) {
 }
 
 function sourceSnapshotAt(source, virtualMinute = state.virtualMinutes) {
+  if (source.liveFeed) {
+    return {
+      ...source,
+      feedSourceId: source.sourceId || canonicalSourceId(source.url),
+      curveOffsetHours: 0,
+    };
+  }
   return {
     ...source,
     initialViews: feedViewsAt(source, virtualMinute),
@@ -666,6 +898,7 @@ function isSourceWatched(sourceId) {
 }
 
 function scoutViewsAt(entry, virtualMinute = state.virtualMinutes) {
+  if (entry.liveFeed) return Math.max(0, Number(entry.initialViews) || 0);
   const elapsedHours = Math.max(0, (virtualMinute - entry.addedMinute) / 60);
   const offset = Math.max(0, entry.curveOffsetHours || 0);
   const baseFactor = growthFactor(entry.curve, offset);
@@ -674,6 +907,7 @@ function scoutViewsAt(entry, virtualMinute = state.virtualMinutes) {
 }
 
 function scoutDiscovererCountAt(entry, virtualMinute = state.virtualMinutes) {
+  if (entry.liveFeed) return Math.max(0, Number(entry.baseDiscoverers) || 0);
   const elapsedHours = Math.max(0, (virtualMinute - entry.addedMinute) / 60);
   const ratio = scoutViewsAt(entry, virtualMinute) / entry.initialViews;
   const viralFollowers = Math.floor(Math.max(0, ratio - 1) * (5 + (entry.seed % 11)));
@@ -682,12 +916,20 @@ function scoutDiscovererCountAt(entry, virtualMinute = state.virtualMinutes) {
 }
 
 function scoutMomentum(entry, virtualMinute = state.virtualMinutes) {
+  if (entry.liveFeed) return Math.max(0, Number(entry.momentum) || 0);
   const now = scoutViewsAt(entry, virtualMinute);
   const next = scoutViewsAt(entry, virtualMinute + 60);
   return Math.max(0, next / Math.max(now, 1) - 1);
 }
 
 function scoutSnapshotAt(entry, virtualMinute = state.virtualMinutes) {
+  if (entry.liveFeed) {
+    return {
+      ...entry,
+      scoutSourceId: entry.sourceId,
+      curveOffsetHours: 0,
+    };
+  }
   const elapsedHours = Math.max(0, (virtualMinute - entry.addedMinute) / 60);
   return {
     ...entry,
@@ -700,6 +942,7 @@ function scoutSnapshotAt(entry, virtualMinute = state.virtualMinutes) {
 }
 
 function sourceMomentumAtOffset(source) {
+  if (source.liveFeed) return Math.max(0, Number(source.momentum) || 0);
   const offset = Math.max(0, source.curveOffsetHours || 0);
   const now = growthFactor(source.curve, offset);
   const next = growthFactor(source.curve, offset + 1);
@@ -728,6 +971,7 @@ function removeScoutCandidate(sourceId) {
 }
 
 function feedMomentum(source, virtualMinute = state.virtualMinutes) {
+  if (source.liveFeed) return Math.max(0, Number(source.momentum) || 0);
   const elapsedHours = Math.max(0, virtualMinute / 60);
   const now = growthFactor(source.curve, elapsedHours);
   const next = growthFactor(source.curve, elapsedHours + 1);
@@ -735,6 +979,12 @@ function feedMomentum(source, virtualMinute = state.virtualMinutes) {
 }
 
 function signalReading(source, momentum = feedMomentum(source)) {
+  if (source.liveFeed && source.signalLabel) {
+    const label = String(source.signalLabel);
+    if (source.signalScore >= 75) return { label, tone: "hot", icon: "▲" };
+    if (source.signalScore >= 45) return { label, tone: "warm", icon: "↗" };
+    return { label, tone: "quiet", icon: "·" };
+  }
   if (momentum >= 0.65) return { label: "과열 직전", tone: "hot", icon: "✹" };
   if (momentum >= 0.24) return { label: "빠른 점화", tone: "warm", icon: "↗" };
   if (momentum >= 0.09) return { label: "온도 상승", tone: "mild", icon: "↑" };
@@ -743,7 +993,8 @@ function signalReading(source, momentum = feedMomentum(source)) {
 }
 
 function feedSources() {
-  const sources = [...sampleSources];
+  const sources = serverConnected ? [...remoteFeedSources] : [...sampleSources];
+  if (serverConnected) return sources;
   if (activeFeedFilter === "new") {
     return sources.sort((a, b) => a.ageHours - b.ageHours || feedMomentum(b) - feedMomentum(a));
   }
@@ -818,7 +1069,7 @@ function applyYoutubeViewSnapshot(position, views, syncedAt = new Date().toISOSt
 
 function viewsAt(position, virtualMinute = state.virtualMinutes) {
   if (usesLiveYoutubeStats(position)) return position.liveViews;
-  const elapsedHours = Math.max(0, (virtualMinute - position.plantedMinute) / 60);
+  const elapsedHours = elapsedMinutesAt(position, virtualMinute) / 60;
   const offset = position.curveOffsetHours || 0;
   const factor = growthFactor(position.curve, offset + elapsedHours) / growthFactor(position.curve, offset);
   return Math.max(position.entryViews, Math.round(position.entryViews * factor));
@@ -835,8 +1086,20 @@ function payoutAt(position, virtualMinute = state.virtualMinutes) {
   return Math.round(SEED_COST * multiplier);
 }
 
+function elapsedMinutesAt(position, virtualMinute = state.virtualMinutes) {
+  const plantedMinute = Number(position.plantedMinute) || 0;
+  const elapsedOffset = Math.max(0, Number(position.elapsedOffsetMinutes) || 0);
+  return Math.max(0, virtualMinute - plantedMinute + elapsedOffset);
+}
+
 function elapsedMinutes(position) {
-  return Math.max(0, state.virtualMinutes - position.plantedMinute);
+  if (serverConnected && position.plantedAt) {
+    const plantedTimestamp = Date.parse(position.plantedAt);
+    if (Number.isFinite(plantedTimestamp)) {
+      return Math.max(0, (Date.now() - plantedTimestamp) / 60000);
+    }
+  }
+  return elapsedMinutesAt(position, state.virtualMinutes);
 }
 
 function getStatus(position) {
@@ -857,8 +1120,55 @@ function render() {
   renderActivity();
   renderDiscover();
   renderJournal();
+  renderLab();
   renderNavigation();
   saveState();
+}
+
+function renderLab() {
+  elements.sampleButton.hidden = serverConnected;
+  if (elements.labConnectionStatus) {
+    elements.labConnectionStatus.textContent = serverConnecting
+      ? "연결 중"
+      : serverConnected
+        ? "LIVE"
+        : "로컬 폴백";
+    elements.labConnectionStatus.dataset.state = serverConnected ? "live" : "offline";
+  }
+  if (elements.labStorageStatus) {
+    elements.labStorageStatus.textContent = serverConnected
+      ? String(serverStatus?.storage || "SERVER").toUpperCase()
+      : "LOCAL STORAGE";
+  }
+  if (elements.labCollectorStatus) {
+    const lastCollectedAt = serverStatus?.latestStatsAt || serverStatus?.latestSearchAt;
+    elements.labCollectorStatus.textContent = serverConnected
+      ? lastCollectedAt
+        ? formatWallTime(lastCollectedAt)
+        : serverStatus?.apiKeyConfigured
+          ? "대기 중"
+          : "API 키 필요"
+      : serverConnectionError
+        ? "서버 연결 안 됨"
+        : "모의 데이터";
+  }
+  if (elements.feedDataNote) {
+    elements.feedDataNote.innerHTML = serverConnected
+      ? `<span></span> LIVE DISCOVERY · 서버 수집 후보 ${formatNumber(remoteFeedSources.length)}개`
+      : `<span></span> LAB FALLBACK · 서버 연결 전에는 모의 후보만 표시됩니다.`;
+  }
+  if (elements.labSimulationGrid) {
+    elements.labSimulationGrid.innerHTML = sampleSources.slice(0, 6).map((source) => {
+      const colors = palette[source.paletteIndex % palette.length];
+      return `
+        <article class="lab-signal-card" style="--lab-color:${colors.color}">
+          <span>${escapeHtml(source.curve)}</span>
+          <strong>${formatCompact(feedViewsAt(source))}</strong>
+          <small>${escapeHtml(shortTitle(source.title))}</small>
+        </article>
+      `;
+    }).join("");
+  }
 }
 
 function renderSummary() {
@@ -956,6 +1266,32 @@ async function refreshYoutubeStats({ manual = false } = {}) {
   const positions = state.positions.filter(isTrackableYoutubePosition);
   if (positions.length === 0) {
     if (manual) showToast("실제 YouTube 영상을 먼저 심어 주세요.");
+    return;
+  }
+
+  if (serverConnected && serverApi) {
+    youtubeSyncInFlight = true;
+    renderYoutubeSyncControl();
+    try {
+      const [bootstrap, status] = await Promise.all([
+        serverApi.syncYoutube(),
+        serverApi.status(),
+      ]);
+      serverStatus = status;
+      applyServerBootstrap(bootstrap);
+      await refreshServerFeed();
+      render();
+      if (manual) {
+        showToast(status.apiKeyConfigured
+          ? `${positions.length}개 영상의 서버 통계를 갱신했습니다.`
+          : "서버에 YOUTUBE_API_KEY가 연결되지 않았습니다.");
+      }
+    } catch (error) {
+      if (manual) showToast(error.message || "서버 통계를 갱신하지 못했습니다.");
+    } finally {
+      youtubeSyncInFlight = false;
+      renderYoutubeSyncControl();
+    }
     return;
   }
 
@@ -1075,10 +1411,12 @@ function positionSeries(position, count = 10) {
     return values;
   }
   const elapsed = Math.max(1, elapsedMinutes(position));
+  const elapsedOffset = Math.max(0, Number(position.elapsedOffsetMinutes) || 0);
+  const startMinute = position.plantedMinute - elapsedOffset;
   const values = [];
   for (let i = 0; i < count; i += 1) {
     const fraction = i / (count - 1);
-    values.push(viewsAt(position, position.plantedMinute + elapsed * fraction));
+    values.push(viewsAt(position, startMinute + elapsed * fraction));
   }
   return values;
 }
@@ -1227,7 +1565,7 @@ function renderDiscover() {
 
   renderScoutQueue();
 
-  elements.discoveryFeed.innerHTML = feedSources().map((source, index) => {
+  const feedMarkup = feedSources().map((source, index) => {
     const sourceId = canonicalSourceId(source.url);
     const currentViews = feedViewsAt(source);
     const discoverers = sourceDiscovererCountAt(source);
@@ -1238,7 +1576,9 @@ function renderDiscover() {
     const harvested = state.harvestedSourceIds.includes(sourceId);
     const watched = isSourceWatched(sourceId);
     const watchLocked = Boolean(active || harvested);
-    const age = Math.max(1, Math.round(source.ageHours + state.virtualMinutes / 60));
+    const age = source.liveFeed
+      ? source.ageHours
+      : Math.max(1, Math.round(source.ageHours + state.virtualMinutes / 60));
     const disabledLabel = active ? `#${formatNumber(active.discoveryRank)}로 심은 중` : harvested ? "수확 완료" : "지금 심기";
     const watchLabel = active ? "이미 심은 신호" : harvested ? "수확 기록에 보관됨" : watched ? "지켜보기 해제" : "지켜보기";
     const footerLabel = active ? "ACTIVE · 후보 보관 불가" : harvested ? "ARCHIVED · 재진입 불가" : watched ? "WATCHING · 변화 알림 켜짐" : "결말은 아직 아무도 모름";
@@ -1285,6 +1625,13 @@ function renderDiscover() {
       </article>
     `;
   }).join("");
+  elements.discoveryFeed.innerHTML = feedMarkup || `
+    <div class="journal-empty">
+      <span aria-hidden="true">⌁</span>
+      <h3>아직 수집된 발견 후보가 없습니다</h3>
+      <p>수집 워커를 실행하면 실제 YouTube 통계를 바탕으로 후보가 이곳에 나타납니다.</p>
+    </div>
+  `;
 
   document.querySelectorAll("[data-feed-filter]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.feedFilter === activeFeedFilter);
@@ -1346,19 +1693,20 @@ function renderJournal() {
 }
 
 function renderNavigation() {
-  const currentView = ["field", "discover", "history"].includes(state.currentView)
+  const currentView = ["field", "discover", "history", "lab"].includes(state.currentView)
     ? state.currentView
     : "field";
   elements.fieldView.hidden = currentView !== "field";
   elements.discoverView.hidden = currentView !== "discover";
   elements.historyView.hidden = currentView !== "history";
+  elements.labView.hidden = currentView !== "lab";
   document.querySelectorAll("[data-nav]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.nav === currentView);
   });
 }
 
 function showView(view, shouldScroll = true) {
-  if (!["field", "discover", "history"].includes(view)) return;
+  if (!["field", "discover", "history", "lab"].includes(view)) return;
   state.currentView = view;
   renderNavigation();
   saveState();
@@ -1366,7 +1714,9 @@ function showView(view, shouldScroll = true) {
 }
 
 function openFeedCandidate(sourceId) {
-  const source = sampleSources.find((item) => canonicalSourceId(item.url) === sourceId);
+  const source = feedSources().find((item) => (
+    (item.sourceId || canonicalSourceId(item.url)) === sourceId
+  ));
   if (!source) return;
   openCandidate(sourceSnapshotAt(source));
 }
@@ -1378,6 +1728,10 @@ function openScoutCandidate(sourceId) {
 }
 
 function toggleWatch(sourceId) {
+  if (serverConnected) {
+    toggleServerWatch(sourceId);
+    return;
+  }
   if (isSourceWatched(sourceId)) {
     removeScoutCandidate(sourceId);
     showToast("지켜보기를 해제했습니다.");
@@ -1399,9 +1753,33 @@ function toggleWatch(sourceId) {
   render();
 }
 
+async function toggleServerWatch(sourceId, alertMode = "all", updateOnly = false) {
+  const source = remoteFeedSources.find((item) => item.sourceId === sourceId)
+    || state.scoutQueue.find((item) => item.sourceId === sourceId)
+    || pendingCandidate;
+  const videoId = source?.videoId || String(sourceId).replace(/^yt:/, "");
+  if (!videoId) return;
+  try {
+    const payload = isSourceWatched(sourceId) && !updateOnly
+      ? await serverApi.unwatch(videoId)
+      : await serverApi.watch(videoId, alertMode);
+    applyServerBootstrap(payload);
+    await refreshServerFeed();
+    render();
+    if (pendingCandidate) renderCandidateSheet();
+    showToast(isSourceWatched(sourceId) ? "지켜보기에 저장했습니다." : "지켜보기를 해제했습니다.");
+  } catch (error) {
+    showToast(error.message || "지켜보기 상태를 바꾸지 못했습니다.");
+  }
+}
+
 function setScoutAlert(sourceId, alertMode) {
   const entry = scoutEntryFor(sourceId);
   if (!entry || !["all", "surge", "off"].includes(alertMode)) return;
+  if (serverConnected) {
+    toggleServerWatch(sourceId, alertMode, true);
+    return;
+  }
   entry.alertMode = alertMode;
   saveState();
   const label = alertMode === "all" ? "모든 변화" : alertMode === "surge" ? "급등만" : "알림 끄기";
@@ -1474,6 +1852,9 @@ function renderCandidateSheet() {
 
   const buttonLabel = isFull ? "선택한 포지션을 뽑고 심기" : "이 링크 심기";
   const needsMoney = !isFull && !affordability;
+  const needsLiveStats = serverConnected && source.statsMode !== "youtube-api";
+  const plantDisabled = needsMoney || needsLiveStats;
+  const disabledPlantLabel = needsLiveStats ? "실제 통계가 필요해" : "코인이 부족해";
 
   elements.candidateContent.innerHTML = `
     <div class="candidate-card">
@@ -1531,8 +1912,8 @@ function renderCandidateSheet() {
     </div>
     <div class="sheet-actions">
       <button class="secondary-button" type="button" data-close-sheet>취소</button>
-      <button class="primary-button" id="confirmPlantButton" type="button" ${needsMoney ? "disabled" : ""}>
-        ${needsMoney ? "코인이 부족해" : buttonLabel}
+      <button class="primary-button" id="confirmPlantButton" type="button" ${plantDisabled ? "disabled" : ""}>
+        ${plantDisabled ? disabledPlantLabel : buttonLabel}
       </button>
     </div>
   `;
@@ -1541,6 +1922,10 @@ function renderCandidateSheet() {
 function togglePendingScoutCandidate() {
   if (!pendingCandidate) return;
   const sourceId = canonicalSourceId(pendingCandidate.url);
+  if (serverConnected) {
+    toggleServerWatch(sourceId);
+    return;
+  }
   if (isSourceWatched(sourceId)) {
     removeScoutCandidate(sourceId);
     showToast("후보 보관함에서 제거했습니다.");
@@ -1558,6 +1943,10 @@ function togglePendingScoutCandidate() {
 
 function plantPendingCandidate() {
   if (!pendingCandidate) return;
+  if (serverConnected) {
+    plantPendingCandidateOnServer();
+    return;
+  }
   const isFull = state.positions.length >= MAX_SLOTS;
   let replacedTitle = null;
 
@@ -1591,7 +1980,32 @@ function plantPendingCandidate() {
   elements.linkInput.value = "";
   showToast(replacedTitle
     ? `“${shortTitle(replacedTitle)}”를 수확하고 새 링크를 심었습니다.`
-    : `“${shortTitle(plantedTitle)}” 신호를 심었습니다.`);
+      : `“${shortTitle(plantedTitle)}” 신호를 심었습니다.`);
+}
+
+async function plantPendingCandidateOnServer() {
+  const candidate = pendingCandidate;
+  if (!candidate || !serverApi) return;
+  if (state.positions.length >= MAX_SLOTS && !selectedReplacementId) {
+    showToast("먼저 교체할 포지션을 선택해 주세요.");
+    return;
+  }
+  try {
+    const payload = await serverApi.plant(candidate.url, selectedReplacementId);
+    applyServerBootstrap(payload);
+    await refreshServerFeed();
+    const planted = state.positions.find((position) => position.sourceId === canonicalSourceId(candidate.url));
+    pendingCandidate = null;
+    selectedReplacementId = null;
+    closeSheets();
+    elements.linkInput.value = "";
+    render();
+    showToast(planted
+      ? `“${shortTitle(planted.title)}”의 #${formatNumber(planted.discoveryRank)} 발견자가 됐습니다.`
+      : "서버 밭에 심었습니다.");
+  } catch (error) {
+    showToast(error.message || "서버 밭에 심지 못했습니다.");
+  }
 }
 
 function openPosition(positionId) {
@@ -1646,7 +2060,7 @@ function openPosition(positionId) {
   openSheet(elements.positionSheet);
 }
 
-function harvestPosition(positionId, showResult = true) {
+function harvestPosition(positionId, showResult = true, shouldRender = true) {
   const index = state.positions.findIndex((item) => item.id === positionId);
   if (index === -1) return null;
 
@@ -1686,10 +2100,41 @@ function harvestPosition(positionId, showResult = true) {
   if (!state.harvestedSourceIds.includes(position.sourceId)) {
     state.harvestedSourceIds.push(position.sourceId);
   }
-  render();
+  if (shouldRender) render();
 
   if (showResult) openResult(result);
   return result;
+}
+
+async function harvestServerPosition(positionId, showResult = true) {
+  if (!serverApi) return;
+  const previousHarvestIds = new Set(state.harvests.map((item) => item.id));
+  try {
+    const payload = await serverApi.harvest(positionId);
+    applyServerBootstrap(payload);
+    await refreshServerFeed();
+    const result = state.harvests.find((item) => !previousHarvestIds.has(item.id));
+    closeSheets();
+    render();
+    if (showResult && result) openResult(result);
+  } catch (error) {
+    showToast(error.message || "서버에서 수확하지 못했습니다.");
+  }
+}
+
+async function harvestAllOnServer() {
+  if (!serverApi || state.positions.length === 0) return;
+  try {
+    const beforeBalance = state.balance;
+    const beforeCount = state.positions.length;
+    const payload = await serverApi.harvestAll();
+    applyServerBootstrap(payload);
+    await refreshServerFeed();
+    render();
+    showToast(`${beforeCount}개 포지션을 수확해 ${formatNumber(state.balance - beforeBalance)} C를 확보했습니다.`);
+  } catch (error) {
+    showToast(error.message || "모두 수확하지 못했습니다.");
+  }
 }
 
 function openResult(result) {
@@ -1952,13 +2397,60 @@ function generateScoutUpdates(previousMinute) {
   }
 }
 
+function syncRealClock(now = Date.now(), shouldRender = true) {
+  if (serverConnected) {
+    if (shouldRender) render();
+    return { advancedMinutes: 0, harvests: [] };
+  }
+  const nowTimestamp = Number(now);
+  if (!Number.isFinite(nowTimestamp)) {
+    return { advancedMinutes: 0, harvests: [] };
+  }
+
+  let clockTimestamp = Date.parse(state.clockUpdatedAt || "");
+  if (!Number.isFinite(clockTimestamp) || clockTimestamp > nowTimestamp) {
+    clockTimestamp = nowTimestamp;
+    state.clockUpdatedAt = new Date(nowTimestamp).toISOString();
+  }
+
+  const advancedMinutes = Math.max(0, Math.floor((nowTimestamp - clockTimestamp) / 60000));
+  if (advancedMinutes > 0) {
+    const previousMinute = state.virtualMinutes;
+    state.virtualMinutes += advancedMinutes;
+    state.clockUpdatedAt = new Date(clockTimestamp + advancedMinutes * 60000).toISOString();
+    generateScoutUpdates(previousMinute);
+  }
+
+  const expired = state.positions.filter((position) => elapsedMinutes(position) >= AUTO_HARVEST_MINUTES);
+  const harvests = expired
+    .map((position) => harvestPosition(position.id, false, false))
+    .filter(Boolean);
+
+  if (shouldRender && (advancedMinutes > 0 || harvests.length > 0)) {
+    render();
+    if (harvests.length === 1) {
+      showToast(`“${shortTitle(harvests[0].title)}”이 24시간을 채워 자동 수확됐습니다.`);
+    } else if (harvests.length > 1) {
+      showToast(`${harvests.length}개 포지션이 24시간을 채워 자동 수확됐습니다.`);
+    }
+  }
+
+  return { advancedMinutes, harvests };
+}
+
 function advanceTime(minutes) {
+  if (serverConnected) {
+    state.virtualMinutes += minutes;
+    render();
+    showToast(`실험실 모의 시계를 ${formatDuration(minutes)}만큼 진행했습니다. 서버 기록은 변하지 않습니다.`);
+    return;
+  }
   const previousMinute = state.virtualMinutes;
   const before = new Map(state.positions.map((position) => [position.id, positionRatio(position)]));
   state.virtualMinutes += minutes;
   generateScoutUpdates(previousMinute);
   const expired = state.positions.filter((position) => elapsedMinutes(position) >= AUTO_HARVEST_MINUTES);
-  const results = expired.map((position) => harvestPosition(position.id, false)).filter(Boolean);
+  const results = expired.map((position) => harvestPosition(position.id, false, false)).filter(Boolean);
   render();
 
   if (results.length === 1) {
@@ -2183,6 +2675,10 @@ elements.scoutQueue.addEventListener("click", (event) => {
   const remove = event.target.closest("[data-scout-remove]");
   if (remove) {
     const entry = scoutEntryFor(remove.dataset.scoutRemove);
+    if (serverConnected) {
+      toggleServerWatch(remove.dataset.scoutRemove);
+      return;
+    }
     removeScoutCandidate(remove.dataset.scoutRemove);
     render();
     showToast(`“${shortTitle(entry?.title || "이 신호")}”을 후보에서 제거했습니다.`);
@@ -2198,9 +2694,17 @@ elements.scoutQueue.addEventListener("change", (event) => {
 });
 
 document.querySelectorAll("[data-feed-filter]").forEach((button) => {
-  button.addEventListener("click", () => {
+  button.addEventListener("click", async () => {
     activeFeedFilter = button.dataset.feedFilter;
     renderDiscover();
+    if (serverConnected) {
+      try {
+        await refreshServerFeed(activeFeedFilter);
+        renderDiscover();
+      } catch (error) {
+        showToast(error.message || "발견 피드를 갱신하지 못했습니다.");
+      }
+    }
   });
 });
 
@@ -2239,7 +2743,8 @@ elements.candidateContent.addEventListener("click", (event) => {
 elements.positionContent.addEventListener("click", (event) => {
   const harvest = event.target.closest("[data-harvest-id]");
   if (harvest) {
-    harvestPosition(harvest.dataset.harvestId, true);
+    if (serverConnected) harvestServerPosition(harvest.dataset.harvestId, true);
+    else harvestPosition(harvest.dataset.harvestId, true);
     return;
   }
   const source = event.target.closest("[data-open-source]");
@@ -2263,10 +2768,6 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("[data-close-sheet]")) closeSheets();
   const nav = event.target.closest("[data-nav]");
   if (!nav) return;
-  if (nav.dataset.nav === "lab") {
-    showToast("실험실은 다음 빌드에서 열립니다. 지금은 발견 감각부터 검증해 봐요.");
-    return;
-  }
   showView(nav.dataset.nav);
 });
 
@@ -2287,6 +2788,10 @@ elements.harvestAllButton.addEventListener("click", () => {
   if (state.positions.length === 0) return;
   const confirmed = window.confirm("보유 중인 모든 포지션을 현재 가치로 수확할까요?");
   if (!confirmed) return;
+  if (serverConnected) {
+    harvestAllOnServer();
+    return;
+  }
   const ids = state.positions.map((position) => position.id);
   const results = ids.map((id) => harvestPosition(id, false)).filter(Boolean);
   const total = results.reduce((sum, result) => sum + result.payout, 0);
@@ -2295,8 +2800,17 @@ elements.harvestAllButton.addEventListener("click", () => {
 });
 
 elements.resetButton.addEventListener("click", () => {
-  const confirmed = window.confirm("프로토타입을 처음 상태로 되돌릴까요?");
+  const confirmed = window.confirm(serverConnected
+    ? "실험실의 모의 시계만 초기화할까요? 서버의 밭·잔액·기록은 유지됩니다."
+    : "프로토타입을 처음 상태로 되돌릴까요?");
   if (!confirmed) return;
+  if (serverConnected) {
+    state.virtualMinutes = 0;
+    state.clockUpdatedAt = new Date().toISOString();
+    render();
+    showToast("실험실 모의 시계만 초기화했습니다.");
+    return;
+  }
   state = buildInitialState();
   saveState();
   closeSheets();
@@ -2304,7 +2818,28 @@ elements.resetButton.addEventListener("click", () => {
   showToast("처음 상태로 초기화했습니다.");
 });
 
+syncRealClock(Date.now(), false);
 render();
+initializeServerMode();
+
+window.setInterval?.(() => {
+  syncRealClock();
+}, REAL_CLOCK_TICK_MS);
+
+window.setInterval?.(async () => {
+  if (!serverConnected || document.visibilityState === "hidden") return;
+  try {
+    await refreshServerState();
+    render();
+  } catch (error) {
+    serverConnectionError = error;
+    renderLab();
+  }
+}, SERVER_STATE_REFRESH_INTERVAL_MS);
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") syncRealClock();
+});
 
 if (typeof fetch === "function") {
   window.setTimeout(() => {

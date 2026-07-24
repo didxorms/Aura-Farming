@@ -58,7 +58,7 @@ const context = {
 context.globalThis = context;
 
 const appPath = path.resolve(__dirname, "../app.js");
-const source = `${fs.readFileSync(appPath, "utf8")}\n;globalThis.__viralTest = { sourceFromUrl, youtubeVideoId, canonicalSourceId, youtubeThumbnailForUrl, growthFactor, calculateEarlyBonus, formatCompact, formatDuration, state, advanceTime, createPosition, sampleSources, payoutAt, positionRatio, positionSeries, viewsAt, usesLiveYoutubeStats, applyYoutubeViewSnapshot, normalizeViewSnapshots, formatSignedPercent, discovererCountAt, discoveryPercentile, harvestPosition, openCandidate, migrateState, feedViewsAt, sourceDiscovererCountAt, sourceSnapshotAt, feedMomentum, createScoutEntry, scoutViewsAt, scoutDiscovererCountAt, scoutSnapshotAt, scoutMomentum, addScoutCandidate, removeScoutCandidate, resultShareText, getPendingCandidate: () => pendingCandidate };`;
+const source = `${fs.readFileSync(appPath, "utf8")}\n;globalThis.__viralTest = { sourceFromUrl, youtubeVideoId, canonicalSourceId, youtubeThumbnailForUrl, growthFactor, calculateEarlyBonus, formatCompact, formatDuration, state, advanceTime, syncRealClock, elapsedMinutesAt, createPosition, sampleSources, payoutAt, positionRatio, positionSeries, viewsAt, usesLiveYoutubeStats, applyYoutubeViewSnapshot, normalizeViewSnapshots, formatSignedPercent, discovererCountAt, discoveryPercentile, harvestPosition, openCandidate, migrateState, feedViewsAt, sourceDiscovererCountAt, sourceSnapshotAt, feedMomentum, createScoutEntry, scoutViewsAt, scoutDiscovererCountAt, scoutSnapshotAt, scoutMomentum, addScoutCandidate, removeScoutCandidate, resultShareText, getPendingCandidate: () => pendingCandidate };`;
 vm.createContext(context);
 vm.runInContext(source, context, { filename: appPath });
 
@@ -104,6 +104,25 @@ assert(nextActualSnapshot.delta === 2500, "Later live sync should report the act
 assert(api.viewsAt(youtubePosition) === 12500 && api.positionRatio(youtubePosition) === 1.25, "Live positions should use actual views instead of the demo clock");
 assert(api.positionSeries(youtubePosition).at(-1) === 12500, "Live charts should end at the latest actual snapshot");
 assert(api.formatSignedPercent(-2.5) === "−2.5%", "Signed growth should preserve audited view decreases");
+const migratedLiveClock = api.migrateState({
+  balance: 1000,
+  virtualMinutes: 120,
+  positions: [{
+    ...youtubePosition,
+    plantedMinute: 120,
+    plantedAt: undefined,
+    elapsedOffsetMinutes: undefined,
+    viewSnapshots: [{ at: "2026-07-24T00:00:00.000Z", views: 10000 }],
+  }],
+  harvests: [],
+  harvestedSourceIds: [],
+  watchlist: [],
+  scoutQueue: [],
+  notifications: [],
+  currentView: "field",
+}, Date.parse("2026-07-24T08:00:00.000Z"));
+assert(api.elapsedMinutesAt(migratedLiveClock.positions[0], migratedLiveClock.virtualMinutes) === 480, "v0.6 live positions should recover wall-clock holding time from the first snapshot");
+assert(migratedLiveClock.positions[0].plantedAt === "2026-07-24T00:00:00.000Z", "Migrated live positions should retain an inferred planting timestamp");
 const scoutCountBefore = api.state.scoutQueue.length;
 assert(api.addScoutCandidate(parsed, "surge"), "An arbitrary link should be saved as a scout candidate");
 assert(api.state.scoutQueue.length === scoutCountBefore + 1, "Scout candidates should not have a separate slot cap");
@@ -147,7 +166,7 @@ assert(Math.abs(api.positionRatio(feedPosition, 7 * 60) - underlyingNextHourRati
 const harvestedSource = api.state.positions[0];
 const harvestResult = api.harvestPosition(harvestedSource.id, false);
 assert(harvestResult.payout >= 1000 && harvestResult.profit >= 0, "Harvest result must be lossless");
-assert(api.resultShareText(harvestResult).includes("떡상농장 v0.6.0"), "Share proof text should identify the v0.6 build");
+assert(api.resultShareText(harvestResult).includes("떡상농장 v0.7.0"), "Share proof text should identify the v0.7.0 build");
 assert(api.state.harvestedSourceIds.includes(harvestedSource.sourceId), "Harvested source should be locked from re-entry");
 assert(!api.addScoutCandidate(harvestedSource), "A harvested signal must not return to the scout desk");
 api.openCandidate({ ...api.sampleSources[0], url: harvestedSource.url });
@@ -194,8 +213,13 @@ const migratedV4 = api.migrateState({
 });
 assert(migratedV4.scoutQueue.length === 0, "Migration should remove active signals left in the v0.4 scout desk");
 
+const virtualMinutesBeforeWallSync = api.state.virtualMinutes;
+api.state.clockUpdatedAt = "2026-07-24T00:00:00.000Z";
+const wallSync = api.syncRealClock(Date.parse("2026-07-24T08:00:00.000Z"), false);
+assert(wallSync.advancedMinutes === 480, "Eight real hours should advance the game clock by 480 minutes");
+assert(api.state.virtualMinutes === virtualMinutesBeforeWallSync + 480, "Wall-clock sync should mutate virtual time");
 api.advanceTime(60);
-assert(api.state.virtualMinutes === 60, "Clock advance should mutate virtual time");
+assert(api.state.virtualMinutes === virtualMinutesBeforeWallSync + 540, "Test clock advance should remain additive after wall-clock sync");
 assert(api.state.notifications.length > 0, "Clock advance should retain scout wire notifications");
 
 console.log(JSON.stringify({
