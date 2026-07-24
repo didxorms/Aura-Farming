@@ -4,7 +4,7 @@ const crypto = require("node:crypto");
 const path = require("node:path");
 const { loadConfig } = require("../lib/config");
 const { createStore } = require("../lib/store");
-const { scoreCandidates } = require("../worker");
+const { percentileRanks, rawMeasurement, scoreCandidates } = require("../worker");
 
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
@@ -74,6 +74,10 @@ const secondPlant = store.plantPosition(playerTwo.id, "dQw4w9WgXcQ", {}, now + 1
 assert(firstPlant.discoveryRank === 1, "The first server discovery should receive rank #1");
 assert(secondPlant.discoveryRank === 2, "Concurrent players should receive unique ordered ranks");
 assert(store.getBootstrap(playerOne.id, now).player.balance === 2200, "Planting should spend seed coins on the server");
+assert(
+  store.getBootstrap(playerOne.id, now).player.fieldValue === 3200,
+  "Planting should preserve total field value in the player row",
+);
 
 let duplicateRejected = false;
 try {
@@ -89,9 +93,28 @@ store.addSnapshotByYoutubeId("dQw4w9WgXcQ", {
   comments: 8,
   capturedAt: "2026-07-24T01:00:00.000Z",
 });
+store.addSnapshotByYoutubeId("dQw4w9WgXcQ", {
+  views: 1500,
+  likes: 40,
+  comments: 5,
+  capturedAt: "2026-07-24T00:30:00.000Z",
+});
+assert(
+  store.getBootstrap(playerOne.id, now + 3_600_000).player.fieldValue > 3200,
+  "A live snapshot should refresh the persisted player field value",
+);
+assert(
+  store.getBootstrap(playerOne.id, now + 3_600_000).positions[0].liveViews === 2500,
+  "An older snapshot must not replace the latest video statistics",
+);
 const harvested = store.harvestPosition(playerOne.id, firstPlant.positionId, now + 3_600_000);
 assert(harvested.payout >= 1000, "Server harvest should preserve the seed value");
 assert(store.getBootstrap(playerOne.id, now + 3_600_000).positions.length === 0, "Harvested positions should leave the active field");
+assert(
+  store.getBootstrap(playerOne.id, now + 3_600_000).player.fieldValue
+    === store.getBootstrap(playerOne.id, now + 3_600_000).player.balance,
+  "A player without active positions should have field value equal to balance",
+);
 
 let secondHarvestRejected = false;
 try {
@@ -112,8 +135,26 @@ const scores = scoreCandidates([{
 }], Date.parse("2026-07-24T01:00:00.000Z"));
 assert(Number.isFinite(scores[0].score) && scores[0].score >= 85, "Accelerating candidates should receive a hot signal");
 
+const tiedRanks = percentileRanks([0, 0, 0, 1]);
+assert(
+  tiedRanks[0] === tiedRanks[1] && tiedRanks[1] === tiedRanks[2],
+  "Equal measurements must receive the same percentile rank",
+);
+const correctedMeasurement = rawMeasurement({
+  publishedAt: "2026-07-23T23:00:00.000Z",
+  snapshots: [
+    { at: "2026-07-24T00:00:00.000Z", views: 1126 },
+    { at: "2026-07-24T00:15:00.000Z", views: 979 },
+    { at: "2026-07-24T00:30:00.000Z", views: 1126 },
+  ],
+}, Date.parse("2026-07-24T00:30:00.000Z"));
+assert(
+  correctedMeasurement.relativeVelocity === 0 && correctedMeasurement.absoluteVelocity === 0,
+  "A view-count audit bounce must not be scored as fresh growth",
+);
+
 const status = store.systemStatus();
-assert(status.players === 2 && status.videos === 2 && status.snapshots === 2, "Server status should audit persisted resources");
+assert(status.players === 2 && status.videos === 2 && status.snapshots === 3, "Server status should audit persisted resources");
 store.close();
 
 console.log(JSON.stringify({

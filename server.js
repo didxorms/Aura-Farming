@@ -10,6 +10,7 @@ const {
   ageHoursFromPublishedAt,
   canonicalYoutubeWatchUrl,
   createYoutubeClient,
+  decodeHtmlEntities,
   extractYoutubeVideoId,
   youtubeThumbnailUrl,
 } = require("./lib/youtube");
@@ -432,7 +433,7 @@ function createServer(options = {}) {
 async function fetchYoutubeStatistics(rawIds) {
   const client = createYoutubeClient({
     apiKey: process.env.YOUTUBE_API_KEY?.trim() || "",
-    appVersion: "0.7.1",
+    appVersion: "0.7.2",
   });
   const items = await client.batchGetStats(normalizeYoutubeVideoIds(rawIds));
   return {
@@ -472,6 +473,7 @@ module.exports = {
   canonicalYoutubeWatchUrl,
   createApplication,
   createServer,
+  decodeHtmlEntities,
   extractYoutubeVideoId,
   fetchYoutubeStatistics,
   hashToken,
