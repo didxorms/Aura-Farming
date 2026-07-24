@@ -93,6 +93,10 @@ async function main() {
     assert(planted.positions.length === 1, "Bootstrap response should contain the active position");
     assert(planted.positions[0].entryViews === 1800, "Planting should refresh the entry snapshot");
     assert(planted.player.balance === 2200, "Server should authoritatively deduct the seed cost");
+    assert(
+      planted.player.fieldValue === 3200,
+      "Bootstrap should expose the persisted player field value",
+    );
 
     const bootstrapResponse = await fetch(`${baseUrl}/api/bootstrap`, { headers });
     const bootstrap = await bootstrapResponse.json();
@@ -111,6 +115,7 @@ async function main() {
       corsOrigin: sessionResponse.headers.get("access-control-allow-origin"),
       activePositions: bootstrap.positions.length,
       serverBalance: bootstrap.player.balance,
+      serverFieldValue: bootstrap.player.fieldValue,
     }, null, 2));
   } finally {
     await new Promise((resolve) => server.close(resolve));

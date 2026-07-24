@@ -3,6 +3,7 @@
 const {
   ageHoursFromPublishedAt,
   canonicalYoutubeWatchUrl,
+  decodeHtmlEntities,
   extractYoutubeVideoId,
   fetchYoutubeStatistics,
   normalizeYoutubeVideoIds,
@@ -33,6 +34,11 @@ assert(canonicalYoutubeWatchUrl(videoId) === `https://www.youtube.com/watch?v=${
 assert(youtubeThumbnailUrl(videoId) === `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`, "Thumbnail URL is incorrect");
 assert(ageHoursFromPublishedAt("2020-01-01T00:00:00Z") > 24, "Published time should convert into an age");
 assert(ageHoursFromPublishedAt("not-a-date") === null, "Invalid published time should be ignored");
+assert(
+  decodeHtmlEntities("Cats &amp; Dogs &#39;Shorts&#39; &quot;Live&quot;")
+    === "Cats & Dogs 'Shorts' \"Live\"",
+  "YouTube title HTML entities should be decoded before storage",
+);
 assert(
   JSON.stringify(normalizeYoutubeVideoIds(`${videoId},${videoId},bad id,aqz-KE-bpKQ`))
     === JSON.stringify([videoId, "aqz-KE-bpKQ"]),

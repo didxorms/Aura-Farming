@@ -20,25 +20,44 @@ function percentileRanks(values) {
     .filter((item) => Number.isFinite(item.value))
     .sort((a, b) => a.value - b.value);
   const ranks = new Array(values.length).fill(0);
-  finite.forEach((item, order) => {
-    ranks[item.index] = finite.length <= 1 ? 1 : order / (finite.length - 1);
-  });
+  if (finite.length <= 1) {
+    finite.forEach((item) => {
+      ranks[item.index] = 1;
+    });
+    return ranks;
+  }
+  for (let start = 0; start < finite.length;) {
+    let end = start;
+    while (end + 1 < finite.length && finite[end + 1].value === finite[start].value) {
+      end += 1;
+    }
+    const rank = ((start + end) / 2) / (finite.length - 1);
+    for (let index = start; index <= end; index += 1) {
+      ranks[finite[index].index] = rank;
+    }
+    start = end + 1;
+  }
   return ranks;
 }
 
 function rawMeasurement(candidate, now = Date.now()) {
   const snapshots = candidate.snapshots || [];
   if (snapshots.length < 2) return null;
-  const latest = snapshots.at(-1);
-  const previous = snapshots.at(-2);
+  let auditedHigh = 0;
+  const auditedSnapshots = snapshots.map((snapshot) => {
+    auditedHigh = Math.max(auditedHigh, Number(snapshot.views) || 0);
+    return { ...snapshot, views: auditedHigh };
+  });
+  const latest = auditedSnapshots.at(-1);
+  const previous = auditedSnapshots.at(-2);
   const hours = Math.max(1 / 60, (Date.parse(latest.at) - Date.parse(previous.at)) / 3_600_000);
   const delta = Math.max(0, latest.views - previous.views);
   const relativeVelocity = delta / Math.max(100, previous.views) / hours;
   const absoluteVelocity = Math.log1p(delta / hours);
 
   let acceleration = 1;
-  if (snapshots.length >= 3) {
-    const older = snapshots.at(-3);
+  if (auditedSnapshots.length >= 3) {
+    const older = auditedSnapshots.at(-3);
     const olderHours = Math.max(
       1 / 60,
       (Date.parse(previous.at) - Date.parse(older.at)) / 3_600_000,
