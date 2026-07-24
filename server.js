@@ -219,9 +219,10 @@ function createApplication(options = {}) {
     if (request.method === "GET" && requestUrl.pathname === "/api/feed") {
       const player = requirePlayer(request);
       const sort = requestUrl.searchParams.get("sort") || "signal";
-      const limit = Number(requestUrl.searchParams.get("limit") || 50);
+      const limit = Number(requestUrl.searchParams.get("limit") || 30);
+      const feed = store.listFeed(player.id, { sort, limit });
       sendJson(response, 200, {
-        items: store.listFeed(player.id, { sort, limit }),
+        ...feed,
         serverTime: new Date().toISOString(),
       });
       return;
@@ -433,7 +434,7 @@ function createServer(options = {}) {
 async function fetchYoutubeStatistics(rawIds) {
   const client = createYoutubeClient({
     apiKey: process.env.YOUTUBE_API_KEY?.trim() || "",
-    appVersion: "0.7.2",
+    appVersion: "0.8.1",
   });
   const items = await client.batchGetStats(normalizeYoutubeVideoIds(rawIds));
   return {

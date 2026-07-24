@@ -2,8 +2,12 @@
 
 const crypto = require("node:crypto");
 const { loadConfig } = require("./lib/config");
+const {
+  percentileRanks,
+  rawMeasurement,
+  scoreCandidates,
+} = require("./lib/discovery-engine");
 const { createStore } = require("./lib/store");
-const { clamp } = require("./lib/game-rules");
 const { createYoutubeClient } = require("./lib/youtube");
 
 function chunk(values, size) {
@@ -12,101 +16,6 @@ function chunk(values, size) {
     chunks.push(values.slice(index, index + size));
   }
   return chunks;
-}
-
-function percentileRanks(values) {
-  const finite = values
-    .map((value, index) => ({ value, index }))
-    .filter((item) => Number.isFinite(item.value))
-    .sort((a, b) => a.value - b.value);
-  const ranks = new Array(values.length).fill(0);
-  if (finite.length <= 1) {
-    finite.forEach((item) => {
-      ranks[item.index] = 1;
-    });
-    return ranks;
-  }
-  for (let start = 0; start < finite.length;) {
-    let end = start;
-    while (end + 1 < finite.length && finite[end + 1].value === finite[start].value) {
-      end += 1;
-    }
-    const rank = ((start + end) / 2) / (finite.length - 1);
-    for (let index = start; index <= end; index += 1) {
-      ranks[finite[index].index] = rank;
-    }
-    start = end + 1;
-  }
-  return ranks;
-}
-
-function rawMeasurement(candidate, now = Date.now()) {
-  const snapshots = candidate.snapshots || [];
-  if (snapshots.length < 2) return null;
-  let auditedHigh = 0;
-  const auditedSnapshots = snapshots.map((snapshot) => {
-    auditedHigh = Math.max(auditedHigh, Number(snapshot.views) || 0);
-    return { ...snapshot, views: auditedHigh };
-  });
-  const latest = auditedSnapshots.at(-1);
-  const previous = auditedSnapshots.at(-2);
-  const hours = Math.max(1 / 60, (Date.parse(latest.at) - Date.parse(previous.at)) / 3_600_000);
-  const delta = Math.max(0, latest.views - previous.views);
-  const relativeVelocity = delta / Math.max(100, previous.views) / hours;
-  const absoluteVelocity = Math.log1p(delta / hours);
-
-  let acceleration = 1;
-  if (auditedSnapshots.length >= 3) {
-    const older = auditedSnapshots.at(-3);
-    const olderHours = Math.max(
-      1 / 60,
-      (Date.parse(previous.at) - Date.parse(older.at)) / 3_600_000,
-    );
-    const olderVelocity = Math.max(0, previous.views - older.views) / olderHours;
-    acceleration = (delta / hours + 1) / (olderVelocity + 1);
-  }
-
-  const ageHours = candidate.publishedAt
-    ? Math.max(0, (Number(now) - Date.parse(candidate.publishedAt)) / 3_600_000)
-    : 24;
-  return {
-    relativeVelocity,
-    absoluteVelocity,
-    acceleration: Math.log1p(Math.max(0, acceleration)),
-    freshness: clamp(1 - ageHours / 24, 0, 1),
-  };
-}
-
-function scoreCandidates(candidates, now = Date.now()) {
-  const measurements = candidates.map((candidate) => rawMeasurement(candidate, now));
-  const relativeRanks = percentileRanks(measurements.map((item) => item?.relativeVelocity));
-  const absoluteRanks = percentileRanks(measurements.map((item) => item?.absoluteVelocity));
-  const accelerationRanks = percentileRanks(measurements.map((item) => item?.acceleration));
-
-  return candidates.map((candidate, index) => {
-    const measurement = measurements[index];
-    if (!measurement) {
-      return {
-        videoId: candidate.videoId,
-        score: null,
-        label: "NEW · 관측 중",
-      };
-    }
-    const score = Math.round(100 * (
-      relativeRanks[index] * 0.4
-      + absoluteRanks[index] * 0.25
-      + accelerationRanks[index] * 0.2
-      + measurement.freshness * 0.15
-    ));
-    const label = score >= 85
-      ? "✹ 과열 직전"
-      : score >= 70
-        ? "↗ 빠른 점화"
-        : score >= 50
-          ? "↑ 온도 상승"
-          : "· 아직 조용함";
-    return { videoId: candidate.videoId, score, label };
-  });
 }
 
 function createCollector(options = {}) {
@@ -152,14 +61,18 @@ function createCollector(options = {}) {
       let requestsUsed = 0;
       for (const lane of config.searchLanes) {
         const videos = await youtube.searchRecent({
-          query: lane,
+          query: lane.query,
           publishedAfter,
           regionCode: config.searchRegion,
           relevanceLanguage: config.searchLanguage,
         });
         requestsUsed += 1;
         itemsSeen += videos.length;
-        videos.forEach((video) => store.upsertVideo(video, { lane, candidate: true }, now));
+        videos.forEach((video) => store.upsertVideo(
+          video,
+          { lane: lane.label, candidate: true },
+          now,
+        ));
       }
       return { requestsUsed, itemsSeen };
     });

@@ -83,6 +83,15 @@ async function main() {
     const resolved = await resolvedResponse.json();
     assert(resolved.videoId === "dQw4w9WgXcQ", "Video resolver should use the server adapter");
 
+    const feedResponse = await fetch(`${baseUrl}/api/feed?sort=signal`, { headers });
+    const feed = await feedResponse.json();
+    assert(feedResponse.status === 200, "Discovery feed endpoint should respond");
+    assert(Array.isArray(feed.items) && feed.items.length === 1, "Resolved live candidates should enter the feed");
+    assert(
+      feed.meta?.engineVersion === "0.8.1" && feed.meta.total === 1,
+      "Discovery feed should expose v0.8 engine metadata",
+    );
+
     const plantResponse = await fetch(`${baseUrl}/api/positions`, {
       method: "POST",
       headers,
@@ -96,6 +105,12 @@ async function main() {
     assert(
       planted.player.fieldValue === 3200,
       "Bootstrap should expose the persisted player field value",
+    );
+    const plantedFeed = await fetch(`${baseUrl}/api/feed?sort=signal`, { headers })
+      .then((response) => response.json());
+    assert(
+      plantedFeed.items.length === 0,
+      "Already discovered videos should leave the player's discovery feed",
     );
 
     const bootstrapResponse = await fetch(`${baseUrl}/api/bootstrap`, { headers });

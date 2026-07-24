@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.7.2";
+const APP_VERSION = "0.8.1";
 const STORAGE_KEY = "viral-field-prototype-v7-lab";
 const LEGACY_STORAGE_KEYS = ["viral-field-prototype-v6", "viral-field-prototype-v5", "viral-field-prototype-v4", "viral-field-prototype-v3", "viral-field-prototype-v2", "viral-field-prototype-v1"];
 const MAX_SLOTS = 4;
@@ -219,6 +219,11 @@ const elements = {
   historyView: document.querySelector("#historyView"),
   labView: document.querySelector("#labView"),
   feedDataNote: document.querySelector("#feedDataNote"),
+  feedRefreshButton: document.querySelector("#feedRefreshButton"),
+  liveSignalCount: document.querySelector("#liveSignalCount"),
+  risingSignalCount: document.querySelector("#risingSignalCount"),
+  discoveryEngineVersion: document.querySelector("#discoveryEngineVersion"),
+  feedEvaluatedAt: document.querySelector("#feedEvaluatedAt"),
   labConnectionStatus: document.querySelector("#labConnectionStatus"),
   labStorageStatus: document.querySelector("#labStorageStatus"),
   labCollectorStatus: document.querySelector("#labCollectorStatus"),
@@ -244,6 +249,7 @@ const serverApi = globalThis.ViralFieldApi || null;
 let serverConnected = false;
 let serverConnecting = false;
 let remoteFeedSources = [];
+let remoteFeedMeta = null;
 let serverStatus = null;
 let serverBootstrapAt = null;
 let serverConnectionError = null;
@@ -256,8 +262,36 @@ function ageHoursFromDate(value) {
     : 1;
 }
 
+function safeRemoteImageUrl(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    return parsed.protocol === "https:" ? parsed.href : "";
+  } catch {
+    return "";
+  }
+}
+
 function paletteIndexFor(value) {
   return hashString(String(value || "viral-field")) % palette.length;
+}
+
+function youtubeCategoryLabel(categoryId, fallback = "기타") {
+  return {
+    1: "영화·애니",
+    2: "자동차",
+    10: "음악",
+    15: "동물",
+    17: "스포츠",
+    19: "여행",
+    20: "게임",
+    22: "일상",
+    23: "코미디",
+    24: "엔터",
+    25: "뉴스",
+    26: "스타일",
+    27: "교육",
+    28: "과학·기술",
+  }[Number(categoryId)] || fallback;
 }
 
 function mapServerFeedItem(item) {
@@ -276,7 +310,15 @@ function mapServerFeedItem(item) {
     paletteIndex: paletteIndexFor(sourceId),
     baseDiscoverers: Math.max(0, Number(item.discovererCount) || 0),
     signalScore: Math.max(0, Number(item.signalScore) || 0),
-    momentum: Math.max(0, Number(item.signalScore) || 0) / 100,
+    scoreDelta: Number(item.scoreDelta) || 0,
+    viewsPerHour: Math.max(0, Number(item.viewsPerHour) || 0),
+    growthRatePerHour: Math.max(0, Number(item.growthRatePerHour) || 0),
+    acceleration: Math.max(0, Number(item.acceleration) || 0),
+    engagementRate: Math.max(0, Number(item.engagementRate) || 0),
+    confidence: Math.max(0, Math.min(1, Number(item.confidence) || 0)),
+    snapshotCount: Math.max(0, Number(item.snapshotCount) || 0),
+    categoryLabel: youtubeCategoryLabel(item.categoryId, item.lane || "기타"),
+    momentum: Math.max(0, Number(item.growthRatePerHour) || 0),
     liveFeed: true,
     statsMode: item.statsMode || "youtube-api",
   };
@@ -342,6 +384,7 @@ async function refreshServerFeed(sort = activeFeedFilter) {
   if (!serverApi) return;
   const payload = await serverApi.feed(sort);
   remoteFeedSources = (payload.items || []).map(mapServerFeedItem);
+  remoteFeedMeta = payload.meta || null;
 }
 
 async function initializeServerMode() {
@@ -359,6 +402,7 @@ async function initializeServerMode() {
     serverConnected = true;
     applyServerBootstrap(bootstrap);
     remoteFeedSources = (feed.items || []).map(mapServerFeedItem);
+    remoteFeedMeta = feed.meta || null;
     render();
     return true;
   } catch (error) {
@@ -380,7 +424,10 @@ async function refreshServerState({ includeFeed = true } = {}) {
     const [bootstrap, status, feed] = await Promise.all(requests);
     serverStatus = status;
     applyServerBootstrap(bootstrap);
-    if (feed) remoteFeedSources = (feed.items || []).map(mapServerFeedItem);
+    if (feed) {
+      remoteFeedSources = (feed.items || []).map(mapServerFeedItem);
+      remoteFeedMeta = feed.meta || null;
+    }
   } finally {
     serverRefreshInFlight = false;
   }
@@ -981,9 +1028,10 @@ function feedMomentum(source, virtualMinute = state.virtualMinutes) {
 function signalReading(source, momentum = feedMomentum(source)) {
   if (source.liveFeed && source.signalLabel) {
     const label = String(source.signalLabel);
-    if (source.signalScore >= 75) return { label, tone: "hot", icon: "▲" };
-    if (source.signalScore >= 45) return { label, tone: "warm", icon: "↗" };
-    return { label, tone: "quiet", icon: "·" };
+    if (source.candidateStatus === "breakout") return { label, tone: "hot", icon: "✹" };
+    if (source.candidateStatus === "rising") return { label, tone: "warm", icon: "↗" };
+    if (source.candidateStatus === "cooling") return { label, tone: "mild", icon: "↓" };
+    return { label, tone: "quiet", icon: source.candidateStatus === "observing" ? "◌" : "·" };
   }
   if (momentum >= 0.65) return { label: "과열 직전", tone: "hot", icon: "✹" };
   if (momentum >= 0.24) return { label: "빠른 점화", tone: "warm", icon: "↗" };
@@ -1153,9 +1201,37 @@ function renderLab() {
         : "모의 데이터";
   }
   if (elements.feedDataNote) {
+    const total = remoteFeedMeta?.total ?? remoteFeedSources.length;
+    const observing = remoteFeedMeta?.observing || 0;
     elements.feedDataNote.innerHTML = serverConnected
-      ? `<span></span> LIVE DISCOVERY · 서버 수집 후보 ${formatNumber(remoteFeedSources.length)}개`
+      ? `<span></span> LIVE DISCOVERY · 판정 가능 ${formatNumber(Math.max(0, total - observing))}개 · 관측 중 ${formatNumber(observing)}개`
       : `<span></span> LAB FALLBACK · 서버 연결 전에는 모의 후보만 표시됩니다.`;
+  }
+  if (elements.liveSignalCount) {
+    elements.liveSignalCount.textContent = formatNumber(
+      serverConnected ? remoteFeedMeta?.total ?? remoteFeedSources.length : sampleSources.length,
+    );
+  }
+  if (elements.risingSignalCount) {
+    elements.risingSignalCount.textContent = formatNumber(
+      serverConnected
+        ? (remoteFeedMeta?.breakout || 0) + (remoteFeedMeta?.rising || 0)
+        : sampleSources.filter((source) => feedMomentum(source) >= 0.24).length,
+    );
+  }
+  if (elements.discoveryEngineVersion) {
+    elements.discoveryEngineVersion.textContent = serverConnected
+      ? String(remoteFeedMeta?.engineVersion || serverStatus?.discoveryEngine || "0.8").toUpperCase()
+      : "LAB";
+  }
+  if (elements.feedEvaluatedAt) {
+    elements.feedEvaluatedAt.textContent = serverConnected && remoteFeedMeta?.lastEvaluatedAt
+      ? formatWallTime(remoteFeedMeta.lastEvaluatedAt)
+      : "대기";
+  }
+  if (elements.feedRefreshButton) {
+    elements.feedRefreshButton.disabled = serverConnecting || serverRefreshInFlight;
+    elements.feedRefreshButton.textContent = serverRefreshInFlight ? "갱신 중…" : "↻ 새로고침";
   }
   if (elements.labSimulationGrid) {
     elements.labSimulationGrid.innerHTML = sampleSources.slice(0, 6).map((source) => {
@@ -1568,8 +1644,6 @@ function renderDiscover() {
   const feedMarkup = feedSources().map((source, index) => {
     const sourceId = canonicalSourceId(source.url);
     const currentViews = feedViewsAt(source);
-    const discoverers = sourceDiscovererCountAt(source);
-    const prospectiveRank = discoverers + 1;
     const signal = signalReading(source);
     const colors = palette[source.paletteIndex % palette.length];
     const active = state.positions.find((position) => position.sourceId === sourceId);
@@ -1581,22 +1655,43 @@ function renderDiscover() {
       : Math.max(1, Math.round(source.ageHours + state.virtualMinutes / 60));
     const disabledLabel = active ? `#${formatNumber(active.discoveryRank)}로 심은 중` : harvested ? "수확 완료" : "지금 심기";
     const watchLabel = active ? "이미 심은 신호" : harvested ? "수확 기록에 보관됨" : watched ? "지켜보기 해제" : "지켜보기";
-    const footerLabel = active ? "ACTIVE · 후보 보관 불가" : harvested ? "ARCHIVED · 재진입 불가" : watched ? "WATCHING · 변화 알림 켜짐" : "결말은 아직 아무도 모름";
+    const footerLabel = active
+      ? "ACTIVE · 후보 보관 불가"
+      : harvested
+        ? "ARCHIVED · 재진입 불가"
+        : watched
+          ? "WATCHING · 변화 알림 켜짐"
+          : `${source.categoryLabel || source.lane || "기타"} · ${source.snapshotCount || 0} SNAPSHOTS`;
+    const thumbnailUrl = safeRemoteImageUrl(source.thumbnailUrl);
+    const feedRank = Number(source.feedRank) || index + 1;
+    const scoreDelta = Number(source.scoreDelta) || 0;
+    const scoreDeltaLabel = scoreDelta === 0
+      ? "—"
+      : `${scoreDelta > 0 ? "+" : ""}${Math.round(scoreDelta)}`;
+    const hourlyViews = Math.max(0, Number(source.viewsPerHour) || 0);
+    const hourlyRate = Math.max(0, Number(source.growthRatePerHour) || 0) * 100;
+    const confidence = Math.round(Math.max(0, Math.min(1, Number(source.confidence) || 0)) * 100);
+    const reason = source.signalReason || (
+      source.liveFeed ? "통계 스냅샷을 분석하는 중" : "모의 성장 곡선 기반 신호"
+    );
 
     return `
       <article class="feed-card ${watched ? "is-watched" : ""}" style="--feed-color:${colors.color}">
         <div class="feed-card-visual">
-          <span class="feed-index">${String(index + 1).padStart(2, "0")}</span>
+          ${thumbnailUrl
+            ? `<img class="feed-thumbnail" src="${escapeHtml(thumbnailUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`
+            : `<span class="feed-orb" aria-hidden="true"></span>`}
+          <span class="feed-index">${String(feedRank).padStart(2, "0")}</span>
           <span class="cover-platform">${shortPlatform(source.platform)}</span>
           <span class="feed-signal feed-signal--${signal.tone}">${signal.icon} ${signal.label}</span>
-          <span class="feed-orb" aria-hidden="true"></span>
+          <span class="feed-score"><small>SCORE</small><strong>${Math.round(source.signalScore || 0)}</strong><em>${scoreDeltaLabel}</em></span>
           <span class="feed-scanline" aria-hidden="true"></span>
         </div>
         <div class="feed-card-body">
           <div class="feed-title-row">
             <div>
               <h3>${escapeHtml(source.title)}</h3>
-              <p>${escapeHtml(source.handle)} · ${age}시간 전</p>
+              <p>${escapeHtml(source.handle)} · ${age}시간 전 · ${escapeHtml(source.lane || "직접 발견")}</p>
             </div>
             <button
               class="watch-button ${watched ? "is-active" : ""}"
@@ -1605,12 +1700,26 @@ function renderDiscover() {
               aria-label="${watchLabel}"
               aria-pressed="${watched}"
               ${watchLocked ? "disabled" : ""}
-            >${watchLocked ? "—" : watched ? "●" : "○"}</button>
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6.5 3.5h11v17l-5.5-3.3-5.5 3.3z"></path>
+              </svg>
+            </button>
           </div>
-          <div class="feed-metrics">
+          <div class="feed-engine-meta" aria-label="후보 점수">
+            <span class="feed-platform-chip">${shortPlatform(source.platform)}</span>
+            <span class="feed-compact-score">
+              <small>DISCOVERY SCORE</small>
+              <strong>${Math.round(source.signalScore || 0)}</strong>
+              <em>${scoreDeltaLabel}</em>
+            </span>
+          </div>
+          <p class="feed-reason"><span>WHY</span>${escapeHtml(reason)}</p>
+          <div class="feed-metrics feed-metrics--engine">
             <div><span>현재 조회</span><strong>${formatCompact(currentViews)}</strong></div>
-            <div><span>발견자</span><strong>${formatCompact(discoverers)}명</strong></div>
-            <div><span>지금 진입</span><strong>#${formatNumber(prospectiveRank)}</strong></div>
+            <div><span>시간당 유입</span><strong>+${formatCompact(hourlyViews)}</strong></div>
+            <div><span>시간당 성장</span><strong>+${hourlyRate.toFixed(hourlyRate >= 10 ? 0 : 1)}%</strong></div>
+            <div><span>판정 신뢰도</span><strong>${confidence}%</strong></div>
           </div>
           <div class="feed-card-actions">
             <span>${footerLabel}</span>
@@ -1625,11 +1734,20 @@ function renderDiscover() {
       </article>
     `;
   }).join("");
+  const emptyFeedCopy = activeFeedFilter === "rising"
+    ? {
+      title: "지금은 확실한 급상승 신호가 없습니다",
+      body: "관측이 계속되면 돌파·상승 판정을 받은 영상만 여기에 나타납니다.",
+    }
+    : {
+      title: "아직 수집된 발견 후보가 없습니다",
+      body: "수집 워커를 실행하면 실제 YouTube 통계를 바탕으로 후보가 이곳에 나타납니다.",
+    };
   elements.discoveryFeed.innerHTML = feedMarkup || `
     <div class="journal-empty">
       <span aria-hidden="true">⌁</span>
-      <h3>아직 수집된 발견 후보가 없습니다</h3>
-      <p>수집 워커를 실행하면 실제 YouTube 통계를 바탕으로 후보가 이곳에 나타납니다.</p>
+      <h3>${emptyFeedCopy.title}</h3>
+      <p>${emptyFeedCopy.body}</p>
     </div>
   `;
 
@@ -1825,6 +1943,15 @@ function renderCandidateSheet() {
   const candidateSignal = signalReading(source, sourceMomentumAtOffset(source));
   const thumbnailUrl = safeImageUrl(source.thumbnailUrl);
   const sourceNote = youtubeSourceNote(source);
+  const engineProof = source.liveFeed
+    ? `
+      <div class="candidate-engine-proof">
+        <span>DISCOVERY ENGINE · ${Math.round(source.signalScore || 0)}점</span>
+        <strong>${escapeHtml(source.signalReason || candidateSignal.label)}</strong>
+        <small>시간당 +${formatCompact(source.viewsPerHour || 0)}뷰 · 성장 +${((source.growthRatePerHour || 0) * 100).toFixed(1)}% · 신뢰도 ${Math.round((source.confidence || 0) * 100)}%</small>
+      </div>
+    `
+    : "";
   const comparisonRows = state.positions.map((position) => {
     const selected = position.id === selectedReplacementId;
     const currentViews = viewsAt(position);
@@ -1866,6 +1993,7 @@ function renderCandidateSheet() {
         <h3>${escapeHtml(source.title)}</h3>
         <p>${escapeHtml(source.handle)}</p>
         ${sourceNote ? `<div class="youtube-source-note">${sourceNote}</div>` : ""}
+        ${engineProof}
         <div class="sheet-stats">
           <div class="sheet-stat"><span>현재 조회</span><strong>${formatCompact(source.initialViews)}</strong></div>
           <div class="sheet-stat"><span>업로드</span><strong>${source.ageHours}시간 전</strong></div>
@@ -2660,6 +2788,19 @@ elements.youtubeSyncButton.addEventListener("click", () => refreshYoutubeStats({
 elements.navPlantButton.addEventListener("click", scrollToPlant);
 elements.changelogButton.addEventListener("click", () => openSheet(elements.changelogSheet));
 elements.directLinkButton.addEventListener("click", scrollToPlant);
+elements.feedRefreshButton.addEventListener("click", async () => {
+  try {
+    if (!serverConnected) {
+      await initializeServerMode();
+      return;
+    }
+    await refreshServerState();
+    render();
+    showToast("최신 발견 판정을 불러왔습니다.");
+  } catch (error) {
+    showToast(error.message || "발견 피드를 갱신하지 못했습니다.");
+  }
+});
 
 elements.discoveryFeed.addEventListener("click", (event) => {
   const watch = event.target.closest("[data-feed-watch]");
