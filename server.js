@@ -432,7 +432,7 @@ function createServer(options = {}) {
 async function fetchYoutubeStatistics(rawIds) {
   const client = createYoutubeClient({
     apiKey: process.env.YOUTUBE_API_KEY?.trim() || "",
-    appVersion: "0.7.0",
+    appVersion: "0.7.1",
   });
   const items = await client.batchGetStats(normalizeYoutubeVideoIds(rawIds));
   return {
