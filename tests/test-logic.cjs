@@ -166,7 +166,7 @@ assert(Math.abs(api.positionRatio(feedPosition, 7 * 60) - underlyingNextHourRati
 const harvestedSource = api.state.positions[0];
 const harvestResult = api.harvestPosition(harvestedSource.id, false);
 assert(harvestResult.payout >= 1000 && harvestResult.profit >= 0, "Harvest result must be lossless");
-assert(api.resultShareText(harvestResult).includes("떡상농장 v0.7.0"), "Share proof text should identify the v0.7.0 build");
+assert(api.resultShareText(harvestResult).includes("떡상농장 v0.7.1"), "Share proof text should identify the v0.7.1 build");
 assert(api.state.harvestedSourceIds.includes(harvestedSource.sourceId), "Harvested source should be locked from re-entry");
 assert(!api.addScoutCandidate(harvestedSource), "A harvested signal must not return to the scout desk");
 api.openCandidate({ ...api.sampleSources[0], url: harvestedSource.url });

@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.7.0";
+const APP_VERSION = "0.7.1";
 const STORAGE_KEY = "viral-field-prototype-v7-lab";
 const LEGACY_STORAGE_KEYS = ["viral-field-prototype-v6", "viral-field-prototype-v5", "viral-field-prototype-v4", "viral-field-prototype-v3", "viral-field-prototype-v2", "viral-field-prototype-v1"];
 const MAX_SLOTS = 4;

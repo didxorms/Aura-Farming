@@ -2,5 +2,5 @@
 
 globalThis.__VIRAL_FIELD_CONFIG__ = globalThis.__VIRAL_FIELD_CONFIG__ || {
   apiBaseUrl: "",
-  appVersion: "0.7.0",
+  appVersion: "0.7.1",
 };
