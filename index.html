@@ -22,7 +22,7 @@
             <span></span><span></span><span></span><span></span>
           </span>
           <div>
-            <p class="eyebrow">VIRAL FIELD / v0.6</p>
+          <p class="eyebrow">VIRAL FIELD / v0.7.0</p>
             <h1>떡상농장</h1>
           </div>
         </div>
@@ -81,7 +81,7 @@
           </div>
           <button class="feed-direct-button" id="directLinkButton" type="button">링크 직접 심기 ↗</button>
         </div>
-        <p class="feed-simulation-note"><span></span> PROTOTYPE DATA · 현재 피드와 경쟁자는 실제 SNS가 아닌 가상 시뮬레이션입니다.</p>
+        <p class="feed-simulation-note" id="feedDataNote"><span></span> LIVE DISCOVERY · 서버가 수집한 실제 YouTube 통계를 표시합니다.</p>
 
         <div class="discovery-feed" id="discoveryFeed" aria-live="polite"></div>
       </section>
@@ -94,6 +94,50 @@
         </div>
         <div class="journal-summary" id="journalSummary"></div>
         <div class="journal-grid" id="journalGrid"></div>
+      </section>
+
+      <section class="page-view lab-view" id="labView" data-view-panel="lab" aria-labelledby="labTitle" hidden>
+        <div class="lab-masthead">
+          <p class="eyebrow">SIMULATION SANDBOX</p>
+          <h2 id="labTitle">실제 밭과 분리된<br />게임 규칙 실험실</h2>
+          <p>시간 가속과 모의 성장 곡선은 여기에서만 움직이며 서버 기록에는 영향을 주지 않습니다.</p>
+        </div>
+
+        <section class="lab-status-panel" aria-labelledby="labStatusTitle">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">V0.7 SYSTEM STATUS</p>
+              <h3 id="labStatusTitle">라이브 연결 상태</h3>
+            </div>
+          </div>
+          <div class="lab-status-grid">
+            <div><span>API</span><strong id="labConnectionStatus">확인 중</strong></div>
+            <div><span>저장소</span><strong id="labStorageStatus">확인 중</strong></div>
+            <div><span>수집기</span><strong id="labCollectorStatus">확인 중</strong></div>
+          </div>
+        </section>
+
+        <section class="demo-clock" aria-labelledby="clockTitle">
+          <div>
+            <p class="eyebrow" id="clockTitle">LAB CLOCK</p>
+            <p><strong id="clockLabel">DAY 01 · 09:00</strong><span>실제 서버 시간과 무관한 모의 시계</span></p>
+          </div>
+          <div class="clock-actions">
+            <button class="chip-button" id="advanceOneButton" type="button">+1H</button>
+            <button class="chip-button chip-button--accent" id="advanceSixButton" type="button">+6H</button>
+          </div>
+        </section>
+
+        <section class="lab-simulation-panel" aria-labelledby="labSimulationTitle">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">CURVE FIXTURES</p>
+              <h3 id="labSimulationTitle">12개 모의 신호</h3>
+            </div>
+          </div>
+          <p>breakout·sleeper·steady 등 기존 성장 곡선을 빠르게 비교하는 테스트 데이터입니다.</p>
+          <div class="lab-simulation-grid" id="labSimulationGrid"></div>
+        </section>
       </section>
 
       <div class="page-view field-view" id="fieldView" data-view-panel="field">
@@ -119,17 +163,6 @@
             <span>발굴력</span>
             <strong id="scoutLevel">LV. 01</strong>
           </div>
-        </div>
-      </section>
-
-      <section class="demo-clock" aria-labelledby="clockTitle">
-        <div>
-          <p class="eyebrow" id="clockTitle">PROTOTYPE CLOCK</p>
-          <p><strong id="clockLabel">DAY 01 · 09:00</strong><span>실제 24시간을 버튼으로 압축</span></p>
-        </div>
-        <div class="clock-actions">
-          <button class="chip-button" id="advanceOneButton" type="button">+1H</button>
-          <button class="chip-button chip-button--accent" id="advanceSixButton" type="button">+6H</button>
         </div>
       </section>
 
@@ -220,8 +253,8 @@
       </div>
 
       <footer class="build-footer">
-        <span>LOCAL PROTOTYPE</span>
-        <button id="changelogButton" type="button">BUILD 0.6 · 변경 기록</button>
+        <span>SERVER BETA</span>
+        <button id="changelogButton" type="button">BUILD 0.7.0 · 변경 기록</button>
       </footer>
     </main>
 
@@ -280,6 +313,35 @@
       <h2 id="changelogTitle">변경 기록</h2>
       <div class="changelog-list">
         <article class="changelog-entry changelog-entry--current">
+          <div class="changelog-version">
+            <strong>v0.7.0</strong>
+            <time datetime="2026-07-24">2026.07.24</time>
+          </div>
+          <div>
+            <h3>SERVER &amp; DATABASE FOUNDATION</h3>
+            <ul>
+              <li>익명 세션·잔액·밭·발견 순번·수확 기록을 서버 DB에 영구 저장</li>
+              <li>실제 YouTube 통계 수집 워커와 서버 기반 발견 피드 추가</li>
+              <li>외부 프런트/서버 분리를 위한 API 주소·CORS·Bearer 세션 설정 지원</li>
+              <li>모의 시간과 성장곡선을 실제 기록과 분리해 실험실로 이동</li>
+            </ul>
+          </div>
+        </article>
+        <article class="changelog-entry">
+          <div class="changelog-version">
+            <strong>v0.6.1</strong>
+            <time datetime="2026-07-24">2026.07.24</time>
+          </div>
+          <div>
+            <h3>REAL-TIME HOLD CLOCK</h3>
+            <ul>
+              <li>실제 경과 시간만큼 보유 시간과 자동 수확 시계를 계속 진행</li>
+              <li>앱을 닫았다 다시 열어도 마지막 저장 시각부터 흐른 시간을 복구</li>
+              <li>기존 v0.6 YouTube 포지션은 최초 조회수 스냅샷으로 심은 시각을 복원</li>
+            </ul>
+          </div>
+        </article>
+        <article class="changelog-entry">
           <div class="changelog-version">
             <strong>v0.6</strong>
             <time datetime="2026-07-24">2026.07.24</time>
@@ -400,6 +462,8 @@
       </button>
     </template>
 
+    <script src="./runtime-config.js"></script>
+    <script src="./api-client.js"></script>
     <script src="./app.js" defer></script>
   </body>
 </html>
