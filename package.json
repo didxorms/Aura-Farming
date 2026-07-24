@@ -1,6 +1,6 @@
 {
   "name": "viral-farm-prototype",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "description": "실제 YouTube 신호를 먼저 발견해 심고 수확하는 서버 기반 게임 프로토타입",
   "engines": {

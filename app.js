@@ -1,6 +1,6 @@
 "use strict";
 
-const APP_VERSION = "0.8.0";
+const APP_VERSION = "0.8.1";
 const STORAGE_KEY = "viral-field-prototype-v7-lab";
 const LEGACY_STORAGE_KEYS = ["viral-field-prototype-v6", "viral-field-prototype-v5", "viral-field-prototype-v4", "viral-field-prototype-v3", "viral-field-prototype-v2", "viral-field-prototype-v1"];
 const MAX_SLOTS = 4;
@@ -1700,7 +1700,19 @@ function renderDiscover() {
               aria-label="${watchLabel}"
               aria-pressed="${watched}"
               ${watchLocked ? "disabled" : ""}
-            >${watchLocked ? "—" : watched ? "●" : "○"}</button>
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M6.5 3.5h11v17l-5.5-3.3-5.5 3.3z"></path>
+              </svg>
+            </button>
+          </div>
+          <div class="feed-engine-meta" aria-label="후보 점수">
+            <span class="feed-platform-chip">${shortPlatform(source.platform)}</span>
+            <span class="feed-compact-score">
+              <small>DISCOVERY SCORE</small>
+              <strong>${Math.round(source.signalScore || 0)}</strong>
+              <em>${scoreDeltaLabel}</em>
+            </span>
           </div>
           <p class="feed-reason"><span>WHY</span>${escapeHtml(reason)}</p>
           <div class="feed-metrics feed-metrics--engine">

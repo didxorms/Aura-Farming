@@ -1239,6 +1239,10 @@ button:disabled {
   background: var(--paper);
 }
 
+.candidate-card {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .candidate-cover,
 .position-cover {
   position: relative;
@@ -1246,6 +1250,11 @@ button:disabled {
   overflow: hidden;
   border: 2px solid var(--ink);
   background: var(--candidate-color, var(--acid));
+}
+
+.candidate-card .candidate-cover {
+  min-height: 0;
+  aspect-ratio: 16 / 9;
 }
 
 .candidate-cover::before,
@@ -1297,6 +1306,13 @@ button:disabled {
   margin: 0;
   font-size: 17px;
   line-height: 1.25;
+}
+
+.candidate-info h3 {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
 }
 
 .candidate-info > p,
@@ -2304,8 +2320,7 @@ button:disabled {
 .feed-card {
   position: relative;
   display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
-  min-height: 226px;
+  grid-template-columns: minmax(0, 1fr);
   overflow: hidden;
   border: 2px solid var(--ink);
   background: var(--white);
@@ -2318,9 +2333,10 @@ button:disabled {
 
 .feed-card-visual {
   position: relative;
-  min-height: 226px;
+  min-height: 0;
   overflow: hidden;
-  border-right: 2px solid var(--ink);
+  aspect-ratio: 16 / 9;
+  border-bottom: 2px solid var(--ink);
   background:
     linear-gradient(135deg, transparent 46%, rgba(23, 26, 21, 0.08) 47%, rgba(23, 26, 21, 0.08) 53%, transparent 54%),
     var(--feed-color);
@@ -2358,24 +2374,19 @@ button:disabled {
 }
 
 .feed-card-visual .cover-platform {
-  z-index: 3;
-  top: 10px;
-  right: 7px;
-  padding: 3px 4px;
-  font-size: 6px;
+  display: none;
 }
 
 .feed-signal {
   position: absolute;
-  right: 7px;
-  bottom: 8px;
-  left: 7px;
+  right: 10px;
+  bottom: 10px;
   z-index: 3;
-  padding: 5px 4px;
+  padding: 6px 8px;
   color: var(--white);
   border: 1.5px solid var(--ink);
   background: var(--ink);
-  font-size: 7px;
+  font-size: 8px;
   font-weight: 950;
   text-align: center;
 }
@@ -2385,7 +2396,7 @@ button:disabled {
   top: 66px;
   left: 50%;
   z-index: 3;
-  display: grid;
+  display: none;
   width: 62px;
   height: 62px;
   color: var(--ink);
@@ -2456,6 +2467,7 @@ button:disabled {
   left: 13px;
   height: 2px;
   z-index: 2;
+  display: none;
   background: var(--ink);
   opacity: 0.34;
   animation: feed-scan 2.7s ease-in-out infinite;
@@ -2496,6 +2508,47 @@ button:disabled {
   white-space: nowrap;
 }
 
+.feed-engine-meta {
+  display: flex;
+  margin-top: 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.feed-platform-chip {
+  padding: 4px 6px;
+  color: var(--white);
+  background: var(--ink);
+  font-size: 7px;
+  font-weight: 950;
+}
+
+.feed-compact-score {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.feed-compact-score small {
+  color: var(--muted);
+  font-size: 6px;
+  font-weight: 900;
+}
+
+.feed-compact-score strong {
+  font-family: var(--display);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.feed-compact-score em {
+  color: var(--muted);
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 900;
+}
+
 .feed-reason {
   display: flex;
   margin: 9px 0 0;
@@ -2526,14 +2579,26 @@ button:disabled {
   color: var(--muted);
   border: 1.5px solid var(--line);
   background: var(--paper);
-  font-size: 12px;
   place-items: center;
+}
+
+.watch-button svg {
+  width: 15px;
+  height: 15px;
+  fill: transparent;
+  stroke: currentColor;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
 }
 
 .watch-button.is-active {
   color: var(--ink);
   border-color: var(--ink);
   background: var(--acid);
+}
+
+.watch-button.is-active svg {
+  fill: currentColor;
 }
 
 .feed-metrics {
@@ -3109,6 +3174,38 @@ button.journal-card:hover {
 
   .feed-card-visual {
     min-height: 188px;
+    aspect-ratio: auto;
+    border-right: 2px solid var(--ink);
+    border-bottom: 0;
+  }
+
+  .feed-card-visual .cover-platform {
+    top: 10px;
+    right: 7px;
+    z-index: 3;
+    display: block;
+    padding: 3px 4px;
+    font-size: 6px;
+  }
+
+  .feed-score {
+    display: grid;
+  }
+
+  .feed-scanline {
+    display: block;
+  }
+
+  .feed-signal {
+    right: 7px;
+    bottom: 8px;
+    left: 7px;
+    padding: 5px 4px;
+    font-size: 7px;
+  }
+
+  .feed-engine-meta {
+    display: none;
   }
 
   .plot-card,
@@ -3118,6 +3215,11 @@ button.journal-card:hover {
 
   .candidate-card {
     grid-template-columns: 135px 1fr;
+  }
+
+  .candidate-card .candidate-cover {
+    min-height: 168px;
+    aspect-ratio: auto;
   }
 
   .comparison-card-metrics {
@@ -3165,14 +3267,6 @@ button.journal-card:hover {
     width: 34px;
   }
 
-  .feed-card {
-    grid-template-columns: 108px minmax(0, 1fr);
-  }
-
-  .feed-card-visual {
-    min-height: 226px;
-  }
-
   .feed-metrics strong {
     font-size: 12px;
   }
@@ -3194,12 +3288,10 @@ button.journal-card:hover {
     height: 93px;
   }
 
-  .candidate-card,
   .position-hero {
     grid-template-columns: 86px 1fr;
   }
 
-  .candidate-cover,
   .position-cover {
     min-height: 120px;
   }

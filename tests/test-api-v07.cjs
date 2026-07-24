@@ -88,7 +88,7 @@ async function main() {
     assert(feedResponse.status === 200, "Discovery feed endpoint should respond");
     assert(Array.isArray(feed.items) && feed.items.length === 1, "Resolved live candidates should enter the feed");
     assert(
-      feed.meta?.engineVersion === "0.8.0" && feed.meta.total === 1,
+      feed.meta?.engineVersion === "0.8.1" && feed.meta.total === 1,
       "Discovery feed should expose v0.8 engine metadata",
     );
 
